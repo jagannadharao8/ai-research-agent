@@ -1,6 +1,9 @@
-import ollama
+import os
+import time
 import numpy as np
 import faiss
+from groq import Groq
+from dotenv import load_dotenv
 
 from core.embedding_model import embed_model
 from tools.web_search import search_web
@@ -8,118 +11,105 @@ from tools.pdf_loader import load_pdf_as_documents
 from evaluation.hallucination_checker import hallucination_check
 
 
-# =====================================================
-# CONFIGURATION
-# =====================================================
+# ============================================================
+# LOAD ENV VARIABLES
+# ============================================================
 
-LLM_MODEL = "llama3:8b"
-
-RETRIEVAL_SIMILARITY_THRESHOLD = 0.35
-MAX_CONTEXT_LENGTH = 4000
+load_dotenv()
 
 
-# =====================================================
-# QUERY TYPE DETECTION
-# =====================================================
+# ============================================================
+# QUERY ROUTING
+# ============================================================
+
+def is_exam_query(query: str) -> bool:
+    exam_keywords = [
+        "pgecet",
+        "gate previous papers",
+        "jee papers",
+        "exam papers",
+        "previous year papers",
+        "question papers"
+    ]
+    q = query.lower()
+    return any(word in q for word in exam_keywords)
+
 
 def is_general_query(query: str) -> bool:
-    query = query.lower()
-
     research_keywords = [
         "latest", "research", "2024", "2025",
-        "study", "paper", "analysis", "impact",
-        "statistics", "report"
+        "paper", "study", "report",
+        "statistics", "trend", "analysis"
     ]
+    q = query.lower()
+    return not any(word in q for word in research_keywords)
 
-    return not any(k in query for k in research_keywords)
 
-
-def is_research_query(query: str) -> bool:
-    query = query.lower()
-
-    research_keywords = [
-        "paper", "research", "study",
-        "journal", "survey",
-        "arxiv", "ieee", "acm",
-        "2024", "2025"
+def needs_academic_boost(query: str) -> bool:
+    academic_terms = [
+        "research paper",
+        "latest research",
+        "arxiv",
+        "journal",
+        "conference paper",
+        "icml",
+        "neurips",
+        "iclr"
     ]
-
-    return any(k in query for k in research_keywords)
-
-
-# =====================================================
-# QUERY REFINEMENT
-# =====================================================
-
-def refine_query(query: str) -> str:
-    prompt = f"""
-Rewrite the following query to optimize it for web retrieval.
-Make it specific and structured.
-
-Query:
-{query}
-"""
-
-    response = ollama.chat(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"num_predict": 60}
-    )
-
-    return response["message"]["content"].strip()
+    q = query.lower()
+    return any(term in q for term in academic_terms)
 
 
-# =====================================================
+# ============================================================
+# STABLE GROQ CALL (CURRENT MODEL)
+# ============================================================
+
+def call_llm(prompt, max_tokens=600):
+
+    api_key = os.getenv("GROQ_API_KEY")
+
+    if not api_key:
+        return "GROQ_API_KEY not configured properly."
+
+    for attempt in range(3):
+        try:
+            client = Groq(api_key=api_key)
+
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",  # ✅ CURRENT ACTIVE GROQ MODEL
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_tokens=500
+            )
+
+            return response.choices[0].message.content
+
+        except Exception as e:
+            print(f"Groq attempt {attempt+1} failed:", e)
+            time.sleep(2)
+
+    return "LLM connection failed after retries."
+
+
+# ============================================================
 # DIRECT MODE
-# =====================================================
+# ============================================================
 
 def generate_direct_answer(query):
+    prompt = f"""
+Provide a clear, concise and professional answer.
 
-    response = ollama.chat(
-        model=LLM_MODEL,
-        messages=[{
-            "role": "user",
-            "content": f"Provide a clear, professional answer.\n\nQuestion:\n{query}"
-        }],
-        options={"num_predict": 400}
-    )
-
-    return response["message"]["content"]
+Question:
+{query}
+"""
+    return call_llm(prompt, max_tokens=400)
 
 
-# =====================================================
-# SEARCH RANKING
-# =====================================================
-
-def rank_documents(query, documents, top_n=6):
-
-    if not documents:
-        return documents
-
-    query_vec = embed_model.encode([query])[0]
-
-    scored_docs = []
-
-    for doc in documents:
-        doc_vec = embed_model.encode([doc["content"]])[0]
-
-        similarity = np.dot(query_vec, doc_vec) / (
-            np.linalg.norm(query_vec) * np.linalg.norm(doc_vec)
-        )
-
-        scored_docs.append((similarity, doc))
-
-    scored_docs.sort(reverse=True, key=lambda x: x[0])
-
-    return [doc for _, doc in scored_docs[:top_n]]
-
-
-# =====================================================
+# ============================================================
 # VECTOR STORE
-# =====================================================
+# ============================================================
 
 def build_vector_store(documents):
-
     texts = [doc["content"] for doc in documents]
 
     embeddings = embed_model.encode(texts)
@@ -131,198 +121,172 @@ def build_vector_store(documents):
     return index, documents
 
 
-# =====================================================
-# RETRIEVAL WITH DYNAMIC K
-# =====================================================
+# ============================================================
+# RETRIEVAL WITH CITATIONS
+# ============================================================
 
-def retrieve_context(query, index, documents, top_k):
+def retrieve_context(query, index, documents, k=5):
 
     query_vector = embed_model.encode([query])
-    D, I = index.search(np.array(query_vector), top_k)
+    D, I = index.search(np.array(query_vector), k)
 
     retrieved_docs = []
-    similarities = []
+    context_chunks = []
 
-    for position, idx in enumerate(I[0]):
-
-        # Convert L2 distance to similarity proxy
-        similarity = 1 - D[0][position]
-        similarities.append(similarity)
+    for citation_number, idx in enumerate(I[0], start=1):
 
         doc = documents[idx]
 
-        retrieved_docs.append({
-            "citation": position + 1,
+        doc_with_citation = {
+            "citation": citation_number,
+            "source": doc.get("source", "web"),
             "title": doc.get("title", ""),
             "url": doc.get("url", ""),
             "content": doc["content"]
-        })
+        }
 
-    avg_similarity = float(np.mean(similarities)) if similarities else 0
+        retrieved_docs.append(doc_with_citation)
 
-    return retrieved_docs, avg_similarity
+        context_chunks.append(
+            f"[{citation_number}] {doc['content']}"
+        )
+
+    context_text = "\n\n".join(context_chunks)
+
+    return context_text, retrieved_docs
 
 
-# =====================================================
+# ============================================================
 # RAG GENERATION
-# =====================================================
+# ============================================================
 
-def generate_answer(query, retrieved_docs):
-
-    context = ""
-
-    for doc in retrieved_docs:
-        context += f"[{doc['citation']}] {doc['content']}\n\n"
-
-    # Context trimming
-    if len(context) > MAX_CONTEXT_LENGTH:
-        context = context[:MAX_CONTEXT_LENGTH]
+def generate_answer(query, context):
 
     prompt = f"""
-Use the retrieved context primarily.
-Cite using [number].
-Apply reasoning only if necessary.
+You are a professional AI research assistant.
 
-Context:
+STRICT RULES:
+1. Use ONLY information explicitly present in the Retrieved Context.
+2. Reference citations like [1], [2].
+3. Do NOT invent information.
+4. If insufficient data exists, clearly state it.
+
+FORMAT:
+
+=== MAIN ANSWER ===
+...
+
+=== MODEL INFERENCE ===
+...
+
+=== RECOMMENDATIONS ===
+...
+
+Retrieved Context:
 {context}
 
 Question:
 {query}
 """
 
-    response = ollama.chat(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"num_predict": 600}
-    )
-
-    return response["message"]["content"]
+    return call_llm(prompt, max_tokens=700)
 
 
-# =====================================================
-# CONFIDENCE CALCULATION
-# =====================================================
+# ============================================================
+# CONFIDENCE & RISK
+# ============================================================
 
-def compute_confidence(hallucination_score,
-                       retrieval_similarity,
-                       critic_score=80):
-
-    hallucination_component = (100 - hallucination_score) * 0.4
-    retrieval_component = (retrieval_similarity * 100) * 0.3
-    critic_component = critic_score * 0.3
-
-    confidence = (
-        hallucination_component +
-        retrieval_component +
-        critic_component
-    )
-
-    return max(0, min(100, confidence))
+def calculate_confidence(score):
+    return round(max(0, 100 - score), 2)
 
 
-# =====================================================
+def classify_risk(score):
+    if score < 20:
+        return "LOW"
+    elif score < 40:
+        return "MEDIUM"
+    else:
+        return "HIGH"
+
+
+# ============================================================
 # MAIN PIPELINE
-# =====================================================
+# ============================================================
 
 def run_rag(query, pdf_path=None):
 
+    documents = []
+
     try:
 
-        # -------------------------------------------------
-        # DIRECT MODE FOR GENERAL QUESTIONS
-        # -------------------------------------------------
+        # -------------------------
+        # EXAM ROUTING
+        # -------------------------
+        if is_exam_query(query):
+            return (
+                "For latest PGECET papers, please visit the official APSCHE website "
+                "or university portals for downloadable PDFs.",
+                [],
+                0.0,
+                "LOW",
+                100.0
+            )
 
+        # -------------------------
+        # DIRECT MODE
+        # -------------------------
         if is_general_query(query):
             answer = generate_direct_answer(query)
-            return answer, [], 0.0, "LOW", 95.0, "Direct"
+            return answer, [], 0.0, "LOW", 100.0
 
-        # -------------------------------------------------
-        # QUERY REFINEMENT
-        # -------------------------------------------------
+        # -------------------------
+        # ACADEMIC BOOST
+        # -------------------------
+        if needs_academic_boost(query):
+            query += " site:arxiv.org"
 
-        refined_query = refine_query(query)
-
-        if is_research_query(query):
-            refined_query += " site:arxiv.org OR site:ieee.org OR site:acm.org"
-
-        # -------------------------------------------------
+        # -------------------------
         # WEB SEARCH
-        # -------------------------------------------------
+        # -------------------------
+        web_docs = search_web(query)
+        if web_docs:
+            documents.extend(web_docs)
 
-        web_docs = search_web(refined_query)
+        # -------------------------
+        # PDF LOAD
+        # -------------------------
+        if pdf_path:
+            pdf_docs = load_pdf_as_documents(pdf_path)
+            documents.extend(pdf_docs)
 
-        if not web_docs:
-            answer = generate_direct_answer(query)
-            return answer, [], 0.0, "LOW", 85.0, "Fallback"
+        if not documents:
+            return "No documents found.", [], 0.0, "LOW", 100.0
 
-        # -------------------------------------------------
-        # RANK DOCUMENTS
-        # -------------------------------------------------
+        # -------------------------
+        # VECTOR STORE
+        # -------------------------
+        index, documents = build_vector_store(documents)
 
-        ranked_docs = rank_documents(query, web_docs)
+        # -------------------------
+        # RETRIEVAL
+        # -------------------------
+        context, retrieved_docs = retrieve_context(query, index, documents)
 
-        # -------------------------------------------------
-        # BUILD VECTOR STORE
-        # -------------------------------------------------
+        if not context.strip():
+            return "Retrieved context is empty.", [], 0.0, "MEDIUM", 50.0
 
-        index, documents = build_vector_store(ranked_docs)
+        # -------------------------
+        # GENERATE ANSWER
+        # -------------------------
+        answer = generate_answer(query, context)
 
-        # -------------------------------------------------
-        # DYNAMIC TOP-K
-        # -------------------------------------------------
+        flagged, score, total = hallucination_check(answer, retrieved_docs)
 
-        if len(query.split()) > 10:
-            top_k = 6
-        else:
-            top_k = 3
+        risk = classify_risk(score)
+        confidence = calculate_confidence(score)
 
-        retrieved_docs, retrieval_similarity = retrieve_context(
-            query, index, documents, top_k
-        )
-
-        # -------------------------------------------------
-        # SIMILARITY THRESHOLD CHECK
-        # -------------------------------------------------
-
-        if retrieval_similarity < RETRIEVAL_SIMILARITY_THRESHOLD:
-            answer = generate_direct_answer(query)
-            return answer, [], 0.0, "LOW", 80.0, "Fallback"
-
-        # -------------------------------------------------
-        # GENERATE RAG ANSWER
-        # -------------------------------------------------
-
-        answer = generate_answer(query, retrieved_docs)
-
-        # -------------------------------------------------
-        # HALLUCINATION CHECK
-        # -------------------------------------------------
-
-        flagged, hallucination_score, _ = hallucination_check(
-            answer, retrieved_docs
-        )
-
-        # -------------------------------------------------
-        # CONFIDENCE
-        # -------------------------------------------------
-
-        confidence = compute_confidence(
-            hallucination_score,
-            retrieval_similarity
-        )
-
-        # -------------------------------------------------
-        # RISK LEVEL
-        # -------------------------------------------------
-
-        if hallucination_score > 40:
-            risk = "HIGH"
-        elif hallucination_score > 20:
-            risk = "MEDIUM"
-        else:
-            risk = "LOW"
-
-        return answer, retrieved_docs, hallucination_score, risk, confidence, "RAG"
+        return answer, retrieved_docs, score, risk, confidence
 
     except Exception as e:
-        return f"Pipeline failed: {e}", [], 0.0, "HIGH", 0.0, "Error"
+        print("Pipeline error:", e)
+        return f"Pipeline failed: {e}", [], 0.0, "HIGH", 0.0
