@@ -1,17 +1,42 @@
 import os
-import time
 import numpy as np
 import faiss
-import ollama
+from groq import Groq
+from dotenv import load_dotenv
 
 from core.embedding_model import embed_model
 from tools.web_search import search_web
 from tools.pdf_loader import load_pdf_as_documents
 from evaluation.hallucination_checker import hallucination_check
 
+load_dotenv()
 
-LLM_MODEL = "llama3:8b"
-SIMILARITY_THRESHOLD = 0.35
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+MODEL_NAME = "llama-3.3-70b-versatile"
+
+
+# =========================
+# LLM CALL (GROQ)
+# =========================
+
+def call_llm(prompt, max_tokens=600):
+    if not GROQ_API_KEY:
+        return "GROQ_API_KEY not configured."
+
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=max_tokens
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return f"LLM Error: {e}"
 
 
 # =========================
@@ -20,23 +45,17 @@ SIMILARITY_THRESHOLD = 0.35
 
 def is_general_query(query: str) -> bool:
     research_keywords = [
-        "research", "paper", "study", "latest",
-        "2024", "2025", "report", "statistics"
+        "research", "paper", "study",
+        "latest", "2024", "2025",
+        "report", "statistics"
     ]
     q = query.lower()
     return not any(word in q for word in research_keywords)
 
 
 def generate_direct_answer(query):
-    response = ollama.chat(
-        model=LLM_MODEL,
-        messages=[{
-            "role": "user",
-            "content": f"Provide a clear and professional answer.\n\nQuestion:\n{query}"
-        }],
-        options={"num_predict": 400}
-    )
-    return response["message"]["content"]
+    prompt = f"Provide a clear and professional answer.\n\nQuestion:\n{query}"
+    return call_llm(prompt, 400)
 
 
 # =========================
@@ -45,10 +64,9 @@ def generate_direct_answer(query):
 
 def build_vector_store(documents):
     texts = [doc["content"] for doc in documents]
-
     embeddings = embed_model.encode(texts)
-    dimension = embeddings.shape[1]
 
+    dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(np.array(embeddings))
 
@@ -78,13 +96,9 @@ def retrieve_context(query, index, documents, k=5):
         }
 
         retrieved_docs.append(doc_with_citation)
-
-        context_chunks.append(
-            f"[{citation_number}] {doc['content']}"
-        )
+        context_chunks.append(f"[{citation_number}] {doc['content']}")
 
     context_text = "\n\n".join(context_chunks)
-
     return context_text, retrieved_docs
 
 
@@ -121,13 +135,7 @@ Question:
 {query}
 """
 
-    response = ollama.chat(
-        model=LLM_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        options={"num_predict": 600}
-    )
-
-    return response["message"]["content"]
+    return call_llm(prompt, 700)
 
 
 # =========================
@@ -154,10 +162,9 @@ def calculate_confidence(score):
 def run_rag(query, pdf_path=None):
 
     try:
-
         documents = []
 
-        # Direct Mode
+        # Direct mode
         if is_general_query(query):
             answer = generate_direct_answer(query)
             return answer, [], 0.0, "LOW", 95.0, "Direct"
@@ -167,7 +174,7 @@ def run_rag(query, pdf_path=None):
         if web_docs:
             documents.extend(web_docs)
 
-        # PDF Load
+        # PDF
         if pdf_path:
             pdf_docs = load_pdf_as_documents(pdf_path)
             documents.extend(pdf_docs)
@@ -175,19 +182,14 @@ def run_rag(query, pdf_path=None):
         if not documents:
             return "No documents found.", [], 0.0, "LOW", 100.0, "Fallback"
 
-        # Vector Store
         index, documents = build_vector_store(documents)
-
-        # Retrieval
         context, retrieved_docs = retrieve_context(query, index, documents)
 
         if not context.strip():
             return "Retrieved context is empty.", [], 0.0, "MEDIUM", 50.0, "Fallback"
 
-        # Generate Answer
         answer = generate_answer(query, context)
 
-        # Hallucination Check
         flagged, score, total = hallucination_check(answer, retrieved_docs)
 
         risk = classify_risk(score)
