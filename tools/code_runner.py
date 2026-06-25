@@ -12,7 +12,7 @@ def extract_python_code(text):
         return "\n".join(matches)
     return text
 
-def run_python_code(code):
+def run_python_code(code, dataset_path=None, dataset_name=None):
     """
     Runs python code in a temporary directory and captures stdout and any generated images.
     Returns (stdout, image_paths).
@@ -21,6 +21,11 @@ def run_python_code(code):
     
     # Create a temporary directory to store the script and its outputs
     temp_dir = tempfile.mkdtemp()
+    
+    if dataset_path and dataset_name:
+        import shutil
+        shutil.copy(dataset_path, os.path.join(temp_dir, dataset_name))
+        
     script_path = os.path.join(temp_dir, "sandbox.py")
     
     with open(script_path, "w", encoding="utf-8") as f:
