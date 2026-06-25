@@ -99,8 +99,9 @@ with tab1:
             st.session_state.messages = []
             st.rerun()
 
-    # Document Upload
-    with st.expander("📄 Document Context (Optional)"):
+    # Advanced Settings & Uploads
+    with st.expander("⚙️ Advanced Settings & Context"):
+        app_mode = st.radio("Agent Mode", ["Chat & Research", "Code Interpreter (Python Sandbox)"])
         uploaded_doc = st.file_uploader("Upload a document or image to chat with it", type=["pdf", "docx", "png", "jpg", "jpeg"])
 
     # Display chat history

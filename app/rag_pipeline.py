@@ -191,6 +191,32 @@ def verify_citations(answer, sources):
     """
     return call_llm(prompt, max_tokens=100).strip()
 
+def generate_with_reflection(prompt, sources, max_retries=1):
+    """Generates an answer, verifies citations, and self-corrects if necessary."""
+    import streamlit as st
+    
+    draft = call_llm(prompt, max_tokens=1500)
+    
+    for attempt in range(max_retries):
+        verdict = verify_citations(draft, sources)
+        
+        if "unsupported" in verdict.lower() or "partial" in verdict.lower():
+            st.warning(f"🔄 **Agent Self-Correction Triggered:** Fact-Checker detected hallucination ({verdict}). Rewriting answer...")
+            correction_prompt = prompt + f"\n\n[CRITICAL FEEDBACK FROM FACT-CHECKER]: Your previous draft was rejected because: {verdict}\n\nYou MUST completely rewrite the answer. Remove ANY claims that are not 100% supported by the Retrieved Context. Do NOT invent data."
+            draft = call_llm(correction_prompt, max_tokens=1500)
+        else:
+            st.success("✅ **Fact Check Passed:** All citations verified on first pass.")
+            return draft
+            
+    # Final check after retries
+    final_verdict = verify_citations(draft, sources)
+    if "unsupported" in final_verdict.lower() or "partial" in final_verdict.lower():
+        st.error(f"⚠️ **Final Fact Check Warning:** Some citations may still be unsupported ({final_verdict})")
+    else:
+        st.success("✅ **Fact Check Passed:** Citations verified after self-correction.")
+        
+    return draft
+
 
 # =========================
 # PREPARE RAG
