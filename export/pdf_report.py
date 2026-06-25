@@ -1,3 +1,4 @@
+import xml.sax.saxutils
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -57,7 +58,7 @@ def generate_pdf_report(
     # TITLE
     # ------------------------
     elements.append(Paragraph("Autonomous AI Research Report", title_style))
-    elements.append(Paragraph("Created by Jagannadharao", normal_style))
+    elements.append(Paragraph("System Generated Report", normal_style))
     elements.append(Spacer(1, 0.3 * inch))
     elements.append(HRFlowable(width="100%", thickness=1))
     elements.append(Spacer(1, 0.3 * inch))
@@ -73,7 +74,8 @@ def generate_pdf_report(
     # RESPONSE
     # ------------------------
     elements.append(Paragraph("AI Generated Response", section_style))
-    elements.append(Paragraph(answer.replace("\n", "<br/>"), normal_style))
+    safe_answer = xml.sax.saxutils.escape(answer).replace("\n", "<br/>")
+    elements.append(Paragraph(safe_answer, normal_style))
     elements.append(Spacer(1, 0.2 * inch))
 
     # ------------------------
@@ -108,7 +110,9 @@ def generate_pdf_report(
             citation = source_doc.get("citation", "")
             title = source_doc.get("title", "Untitled")
             url = source_doc.get("url", "")
-            source_text = f"[{citation}] {title} - {url}"
+            safe_title = xml.sax.saxutils.escape(title)
+            safe_url = xml.sax.saxutils.escape(url)
+            source_text = f"[{citation}] {safe_title} - {safe_url}"
 
             source_list.append(
                 ListItem(Paragraph(source_text, normal_style))

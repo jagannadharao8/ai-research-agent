@@ -83,92 +83,132 @@ tab1, tab2 = st.tabs(["🔍 Research", "📊 Real-Time Analytics"])
 
 with tab1:
     # --------------------------------------------------
+    # SESSION STATE INIT
+    # --------------------------------------------------
+    if "research_results" not in st.session_state:
+        st.session_state.research_results = None
+
+    # --------------------------------------------------
     # USER INPUT
     # --------------------------------------------------
-    query = st.text_input("Enter your research question:")
-    use_pdf = st.checkbox("Add a PDF document for context")
-
-    pdf_path = None
-    if use_pdf:
-        pdf_path = st.text_input("Enter full PDF path (or relative to project root):")
+    query = st.text_input("Enter your research question:", max_chars=500)
+    uploaded_pdf = st.file_uploader("Upload a PDF document for context (optional)", type=["pdf"])
 
     # --------------------------------------------------
     # RUN PIPELINE
     # --------------------------------------------------
-    if st.button("Run Research 🚀"):
+    col_run, col_clear = st.columns([1, 5])
+    with col_run:
+        run_pressed = st.button("Run Research 🚀")
+    with col_clear:
+        if st.button("Clear Results 🗑️"):
+            st.session_state.research_results = None
+            st.rerun()
 
+    if run_pressed:
         if not query.strip():
             st.warning("Please enter a research question.")
         else:
+            pdf_path = None
+            if uploaded_pdf is not None:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(uploaded_pdf.getvalue())
+                    pdf_path = tmp.name
+
             with st.spinner("Analyzing web sources and preparing context..."):
                 prompt, sources, mode = prepare_rag(query, pdf_path)
             
+            if pdf_path and os.path.exists(pdf_path):
+                try:
+                    os.remove(pdf_path)
+                except:
+                    pass
+            
             st.success("Context Prepared! Generating response...")
 
-            col1, col2 = st.columns([3, 1])
+            st.session_state.research_results = {
+                "query": query,
+                "mode": mode,
+                "sources": sources,
+                "prompt": prompt,
+                "answer": None, # Will stream
+                "score": 0.0,
+                "risk": "LOW",
+                "confidence": 100.0
+            }
 
-            with col1:
-                st.info(f"**Execution Mode:** {mode}")
-                st.subheader("AI Response")
-                
-                # Real-time Streaming
-                stream = stream_llm(prompt)
+    if st.session_state.research_results is not None:
+        res = st.session_state.research_results
+        
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            st.info(f"**Execution Mode:** {res['mode']}")
+            st.subheader("AI Response")
+            
+            # Real-time Streaming or Cached
+            if res["answer"] is None:
+                stream = stream_llm(res["prompt"])
                 answer = st.write_stream(stream)
-
-                # Sources
-                if sources:
-                    st.subheader("Sources Referenced")
-                    for doc in sources:
-                        citation = doc.get("citation", "")
-                        title = doc.get("title", "Untitled")
-                        url = doc.get("url", "")
-                        if url:
-                            st.markdown(f"- **[{citation}]** [{title}]({url})")
-                        else:
-                            st.markdown(f"- **[{citation}]** {title}")
-
-            with col2:
+                res["answer"] = answer
+                
+                # Calculate metrics after streaming
                 with st.spinner("Calculating reliability metrics..."):
-                    score, risk, confidence = evaluate_answer(answer, sources)
+                    score, risk, confidence = evaluate_answer(answer, res["sources"])
+                    res["score"] = score
+                    res["risk"] = risk
+                    res["confidence"] = confidence
                     
                     # Log to database for real-time analytics
-                    log_query(query, mode, score, confidence, risk)
+                    log_query(res["query"], res["mode"], score, confidence, risk)
+                st.rerun() # Rerun to update metrics UI
+            else:
+                st.markdown(res["answer"])
 
-                st.subheader("Reliability Metrics")
-                st.metric("Hallucination Score", f"{score:.2f}%")
-                st.metric("Confidence", f"{confidence:.2f}%")
-                st.metric("Risk Level", risk)
+            # Sources
+            if res["sources"]:
+                st.subheader("Sources Referenced")
+                for doc in res["sources"]:
+                    citation = doc.get("citation", "")
+                    title = doc.get("title", "Untitled")
+                    url = doc.get("url", "")
+                    if url:
+                        st.markdown(f"- **[{citation}]** [{title}]({url})")
+                    else:
+                        st.markdown(f"- **[{citation}]** {title}")
+
+        with col2:
+            st.subheader("Reliability Metrics")
+            st.metric("Hallucination Score", f"{res['score']:.2f}%")
+            st.metric("Confidence", f"{res['confidence']:.2f}%")
+            st.metric("Risk Level", res['risk'])
+            
+            # PDF Generation
+            tmp_pdf_path = os.path.join(tempfile.gettempdir(), f"report_{hash(res['query'])}.pdf")
                 
-                # PDF Generation
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                    tmp_pdf_path = tmp_file.name
+            try:
+                generate_pdf_report(
+                    filename=tmp_pdf_path,
+                    query=res['query'],
+                    answer=res['answer'],
+                    score=res['score'],
+                    confidence=res['confidence'],
+                    risk=res['risk'],
+                    sources=res['sources']
+                )
+                
+                with open(tmp_pdf_path, "rb") as pdf_file:
+                    pdf_bytes = pdf_file.read()
                     
-                try:
-                    generate_pdf_report(
-                        filename=tmp_pdf_path,
-                        query=query,
-                        answer=answer,
-                        score=score,
-                        confidence=confidence,
-                        risk=risk,
-                        sources=sources
-                    )
-                    
-                    with open(tmp_pdf_path, "rb") as pdf_file:
-                        pdf_bytes = pdf_file.read()
-                        
-                    st.markdown("---")
-                    st.download_button(
-                        label="📥 Download PDF Report",
-                        data=pdf_bytes,
-                        file_name="Research_Report.pdf",
-                        mime="application/pdf"
-                    )
-                except Exception as e:
-                    st.error(f"Could not generate PDF: {e}")
-                finally:
-                    if os.path.exists(tmp_pdf_path):
-                        os.remove(tmp_pdf_path)
+                st.markdown("---")
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name="Research_Report.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error(f"Could not generate PDF: {e}")
 
 with tab2:
     st.subheader("Live System Analytics")

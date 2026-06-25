@@ -5,10 +5,9 @@ def search_web(query, max_results=5, max_retries=3):
     """
     Returns structured documents from DuckDuckGo search with retry logic.
     """
-    results = []
-
     for attempt in range(max_retries):
         try:
+            results = []
             with DDGS() as ddgs:
                 for r in ddgs.text(query, max_results=max_results):
                     results.append({
@@ -26,4 +25,4 @@ def search_web(query, max_results=5, max_retries=3):
             else:
                 return []
 
-    return results
+    return []

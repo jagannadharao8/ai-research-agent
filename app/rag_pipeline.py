@@ -3,16 +3,30 @@ import numpy as np
 import faiss
 from groq import Groq
 from dotenv import load_dotenv
+import streamlit as st
 
-from core.embedding_model import embed_model
+from core.embedding_model import get_embed_model
 from tools.web_search import search_web
 from tools.pdf_loader import load_pdf_as_documents
 from evaluation.hallucination_checker import hallucination_check
 
 load_dotenv()
-
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MODEL_NAME = "llama-3.3-70b-versatile"
+
+_groq_client = None
+
+def get_groq_client():
+    global _groq_client
+    if _groq_client is None:
+        api_key = os.getenv("GROQ_API_KEY")
+        if not api_key:
+            try:
+                api_key = st.secrets["GROQ_API_KEY"]
+            except:
+                pass
+        if api_key:
+            _groq_client = Groq(api_key=api_key)
+    return _groq_client
 
 
 # =========================
@@ -20,11 +34,11 @@ MODEL_NAME = "llama-3.3-70b-versatile"
 # =========================
 
 def call_llm(prompt, max_tokens=600):
-    if not GROQ_API_KEY:
+    client = get_groq_client()
+    if not client:
         return "GROQ_API_KEY not configured."
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
 
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -56,7 +70,7 @@ def is_general_query(query: str) -> bool:
 
 def build_vector_store(documents):
     texts = [doc["content"] for doc in documents]
-    embeddings = embed_model.encode(texts)
+    embeddings = get_embed_model().encode(texts)
 
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
@@ -65,13 +79,19 @@ def build_vector_store(documents):
     return index, documents
 
 def retrieve_context(query, index, documents, k=5):
-    query_vector = embed_model.encode([query])
+    if not documents:
+        return "", []
+        
+    query_vector = get_embed_model().encode([query])
     D, I = index.search(np.array(query_vector), k)
 
     retrieved_docs = []
     context_chunks = []
 
     for citation_number, idx in enumerate(I[0], start=1):
+        if idx == -1 or idx >= len(documents):
+            continue
+            
         doc = documents[idx]
 
         doc_with_citation = {
@@ -93,12 +113,12 @@ def retrieve_context(query, index, documents, k=5):
 # =========================
 
 def stream_llm(prompt, max_tokens=700):
-    if not GROQ_API_KEY:
+    client = get_groq_client()
+    if not client:
         yield "GROQ_API_KEY not configured."
         return
 
     try:
-        client = Groq(api_key=GROQ_API_KEY)
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
@@ -198,7 +218,9 @@ def calculate_confidence(score):
     return round(max(0, 100 - score), 2)
 
 def evaluate_answer(answer, retrieved_docs):
-    if not retrieved_docs or answer.startswith("LLM Error:"):
+    if answer.startswith("LLM Error:"):
+        return 100.0, "HIGH", 0.0
+    if not retrieved_docs:
         return 0.0, "LOW", 100.0
 
     flagged, score, total = hallucination_check(answer, retrieved_docs)

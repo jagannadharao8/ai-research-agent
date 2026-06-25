@@ -48,8 +48,10 @@ def split_text_into_chunks(text, chunk_size=500, overlap=100):
             current_chunk = overlap_chunk
             current_length = overlap_length
             
-    if current_chunk and " ".join(current_chunk) not in chunks:
-        chunks.append(" ".join(current_chunk))
+    if current_chunk:
+        joined_chunk = " ".join(current_chunk)
+        if not chunks or joined_chunk != chunks[-1]:
+            chunks.append(joined_chunk)
         
     return chunks
 

@@ -1,6 +1,6 @@
 import numpy as np
 import re
-from core.embedding_model import embed_model
+from core.embedding_model import get_embed_model
 
 
 def extract_main_answer(text):
@@ -29,7 +29,7 @@ def split_into_sentences(text):
     Improved sentence splitter avoiding common abbreviations
     """
     # A slightly better regex avoiding single letter abbreviations like U.S. or U.K.
-    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
+    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?|\!)\s', text)
     return [s.strip() for s in sentences if len(s.strip()) > 10]
 
 
@@ -50,7 +50,7 @@ def compute_similarity(sentence, context_embeddings):
     """
     Compute maximum cosine similarity between sentence and retrieved docs
     """
-    sentence_embedding = embed_model.encode([sentence])[0]
+    sentence_embedding = get_embed_model().encode([sentence])[0]
 
     similarities = [
         safe_cosine_similarity(sentence_embedding, ctx_emb)
@@ -79,18 +79,15 @@ def hallucination_check(full_answer, retrieved_docs, threshold=0.50):
     if not context_texts:
         return [], 0.0, len(sentences)
 
-    context_embeddings = embed_model.encode(context_texts)
+    context_embeddings = get_embed_model().encode(context_texts)
 
     flagged = []
-    supported_count = 0
 
     for sentence in sentences:
         similarity = compute_similarity(sentence, context_embeddings)
 
         if similarity < threshold:
             flagged.append((sentence, similarity))
-        else:
-            supported_count += 1
 
     total_sentences = len(sentences)
     hallucination_score = (len(flagged) / total_sentences) * 100

@@ -1,236 +1,100 @@
-🧠 Autonomous AI Research Agent
+# 🧠 Autonomous AI Research Agent
 
-Production-Ready AI Research System
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=for-the-badge&logo=Streamlit&logoColor=white)
+![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![Groq](https://img.shields.io/badge/Groq-000000?style=for-the-badge&logo=groq&logoColor=white)
 
-Built using Retrieval-Augmented Generation (RAG), Groq LLM, semantic search, and hallucination detection.
+The **Autonomous AI Research Agent** is a next-generation research assistant powered by Groq's high-speed inference and Llama-3. It dynamically routes queries, searches the web or uploaded PDFs, and provides fully cited, highly accurate responses with real-time hallucination checking.
 
-Live Demo:
+---
 
-https://jagannadharao-ai-research-agent.streamlit.app
+## 🌟 Key Features
 
-📌 Project Overview
+- **⚡ Blazing Fast Inference**: Powered by Groq's Llama-3.3-70B model.
+- **🔍 Intelligent Routing**: Automatically decides between direct answering and real-time Web Search / RAG.
+- **🌐 Live Web Search**: Fetches the latest information from the web via DuckDuckGo.
+- **📄 PDF Context Support**: Upload your own PDFs to provide custom knowledge bases.
+- **🛡️ Real-Time Hallucination Checking**: Every sentence is mathematically evaluated against the source context using FAISS vector similarity.
+- **📊 Live Analytics**: Tracks query history, confidence metrics, and risk levels in real-time.
+- **📥 PDF Export**: Download beautiful, structured PDF reports of your research.
 
-Autonomous AI Research Agent is an end-to-end AI system that performs structured research and generates grounded, citation-based responses.
+---
 
-Unlike basic chatbots, this system:
+## 📁 Project Architecture
 
-Retrieves relevant documents from the web
-
-Uses semantic embeddings for context matching
-
-Generates answers grounded in retrieved content
-
-Detects hallucinations
-
-Calculates confidence scores
-
-Exports structured PDF reports
-
-This project demonstrates real-world AI system engineering beyond simple prompt-based LLM applications.
-
-🚀 Core Features
-
-Hybrid Query Routing (Direct + RAG Mode)
-
-Real-time Web Search Integration
-
-Citation-Based Answering
-
-Semantic Vector Search (FAISS)
-
-Hallucination Risk Scoring
-
-Confidence Percentage Calculation
-
-Automated PDF Report Generation
-
-Cloud Deployment (Streamlit Cloud)
-
-Groq LLM Integration
-
-🏗️ System Architecture
-
-User Query
-
-↓
-
-Query Routing
-
-↓
-
-Web Search
-
-↓
-
-Embedding (Sentence Transformers)
-
-↓
-
-FAISS Vector Index
-
-↓
-
-Context Retrieval
-
-↓
-
-Groq LLM Generation
-
-↓
-
-Hallucination Detection
-
-↓
-
-Confidence \& Risk Scoring
-
-🛠️ Tech Stack
-
-Frontend
-
-Streamlit
-
-LLM
-
-Groq (Llama 3)
-
-Embeddings
-
-Sentence Transformers (MiniLM)
-
-Vector Database
-
-FAISS
-
-Search
-
-DuckDuckGo (DDGS)
-
-PDF Handling
-
-PyPDF
-
-ReportLab
-
-Deployment
-
-Streamlit Cloud
-
-📂 Project Structure
-
+```text
 AI-Research-Agent/
-
-│
-
 ├── app/
-
-│   └── rag\_pipeline.py
-
+│   ├── __init__.py
+│   └── rag_pipeline.py          # Core RAG, LLM calls, and query routing
 ├── core/
-
-│   └── embedding\_model.py
-
-├── tools/
-
-│   ├── web\_search.py
-
-│   └── pdf\_loader.py
-
+│   ├── __init__.py
+│   ├── database.py              # SQLite analytics and query logging
+│   └── embedding_model.py       # SentenceTransformers embedding lazy-loader
 ├── evaluation/
-
-│   └── hallucination\_checker.py
-
+│   ├── __init__.py
+│   └── hallucination_checker.py # Vector-based hallucination scoring
 ├── export/
-
-│   └── pdf\_report.py
-
+│   ├── __init__.py
+│   └── pdf_report.py            # PDF report generation (ReportLab)
+├── tools/
+│   ├── __init__.py
+│   ├── pdf_loader.py            # PDF parsing and semantic chunking
+│   └── web_search.py            # DuckDuckGo integration with retry logic
 ├── ui/
+│   ├── __init__.py
+│   └── app.py                   # Streamlit Frontend
+├── .env                         # Environment variables (API keys)
+├── requirements.txt             # Python dependencies
+└── README.md                    # Project documentation
+```
 
-│   └── app.py
+---
 
-├── requirements.txt
+## 🚀 Getting Started
 
-└── README.md
+### 1. Prerequisites
+- Python 3.9+
+- A [Groq API Key](https://console.groq.com/keys)
 
-💻 Run Locally
+### 2. Installation
 
-Clone Repository
+Clone the repository and install dependencies:
 
+```bash
 git clone https://github.com/jagannadharao8/ai-research-agent.git
-
 cd ai-research-agent
-
-Create Virtual Environment
-
 python -m venv venv
-
-venv\\Scripts\\activate
-
-Install Dependencies
-
+source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 pip install -r requirements.txt
+```
 
-Add Groq API Key
+### 3. Configuration
 
-Create a .env file in the project root:
+Create a `.env` file in the root directory and add your Groq API key:
+```env
+GROQ_API_KEY=your_groq_api_key_here
+```
 
-GROQ\_API\_KEY=your\_api\_key\_here
+### 4. Run the Application
 
-Run the Application
-
+Launch the Streamlit app:
+```bash
 streamlit run ui/app.py
+```
 
-📊 Reliability Mechanism
+---
 
-This system improves AI reliability through:
+## 🛠️ Built With
 
-Retrieval-based context injection
+- **[Streamlit](https://streamlit.io/)**: Frontend UI and Session State
+- **[Groq](https://groq.com/)**: Fast LLM Inference (Llama 3)
+- **[SentenceTransformers](https://www.sbert.net/)**: Local Embedding Generation
+- **[FAISS](https://github.com/facebookresearch/faiss)**: Fast Vector Similarity Search
+- **[DuckDuckGo Search](https://pypi.org/project/duckduckgo-search/)**: Live Web Search
+- **[ReportLab](https://www.reportlab.com/)**: PDF Export
 
-Similarity validation thresholds
+---
 
-Hallucination scoring
-
-Risk classification (Low / Medium / High)
-
-Confidence percentage calculation
-
-This ensures grounded and transparent AI responses.
-
-🎯 Use Cases
-
-Academic Research Assistance
-
-AI Paper Discovery
-
-Market \& Trend Analysis
-
-Structured Knowledge Retrieval
-
-Automated Research Report Generation
-
-👤 Author
-
-Jagannadharao
-
-AI/ML Engineer
-
-GitHub:
-
-https://github.com/jagannadharao8
-
-⭐ Final Note
-
-This project demonstrates:
-
-End-to-end AI system design
-
-Retrieval engineering
-
-LLM integration
-
-Reliability scoring
-
-Cloud deployment
-
-Professional Git workflow
-
+## 📄 License
+This project is for educational and research purposes.
