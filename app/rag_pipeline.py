@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 from core.embedding_model import get_embed_model
 from tools.web_search import search_web
-from tools.pdf_loader import load_pdf_as_documents
+from tools.document_loader import load_document
 from evaluation.hallucination_checker import hallucination_check
 
 load_dotenv()
@@ -223,10 +223,10 @@ def prepare_rag(query, pdf_path=None, chat_history=None):
             if web_docs:
                 documents.extend(web_docs)
 
-        # PDF
+        # Document
         if pdf_path:
-            pdf_docs = load_pdf_as_documents(pdf_path)
-            documents.extend(pdf_docs)
+            file_docs = load_document(pdf_path)
+            documents.extend(file_docs)
 
         if not documents:
             prompt = f"{history_text}Provide a clear and professional answer indicating no documents were found.\n\nQuestion:\n{query}"

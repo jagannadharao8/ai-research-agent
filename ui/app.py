@@ -99,9 +99,9 @@ with tab1:
             st.session_state.messages = []
             st.rerun()
 
-    # PDF Upload
+    # Document Upload
     with st.expander("📄 Document Context (Optional)"):
-        uploaded_pdf = st.file_uploader("Upload a PDF document to chat with it", type=["pdf"])
+        uploaded_doc = st.file_uploader("Upload a document or image to chat with it", type=["pdf", "docx", "png", "jpg", "jpeg"])
 
     # Display chat history
     for msg in st.session_state.messages:
@@ -127,11 +127,13 @@ with tab1:
             st.markdown(query)
             
         with st.chat_message("assistant"):
-            pdf_path = None
-            if uploaded_pdf is not None:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(uploaded_pdf.getvalue())
-                    pdf_path = tmp.name
+            doc_path = None
+            if uploaded_doc is not None:
+                # Keep extension
+                ext = uploaded_doc.name.split('.')[-1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
+                    tmp.write(uploaded_doc.getvalue())
+                    doc_path = tmp.name
                     
             logger.info(f"Processing query: {query}")
             
@@ -150,7 +152,7 @@ with tab1:
                 })
             else:
                 with st.spinner("Agent Planner decomposing query and preparing context..."):
-                    prompt, sources, mode = prepare_rag(query, pdf_path, chat_history=st.session_state.messages[:-1])
+                    prompt, sources, mode = prepare_rag(query, doc_path, chat_history=st.session_state.messages[:-1])
                 
                 st.info(f"**Execution Mode:** {mode}")
                 
@@ -215,9 +217,9 @@ with tab1:
                     }
                 })
 
-            if pdf_path and os.path.exists(pdf_path):
+            if doc_path and os.path.exists(doc_path):
                 try:
-                    os.remove(pdf_path)
+                    os.remove(doc_path)
                 except OSError:
                     pass
 
