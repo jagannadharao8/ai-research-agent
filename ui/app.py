@@ -99,10 +99,9 @@ with tab1:
             st.session_state.messages = []
             st.rerun()
 
-    # Sidebar for PDF Upload
-    with st.sidebar:
-        st.header("Document Context")
-        uploaded_pdf = st.file_uploader("Upload a PDF document", type=["pdf"])
+    # PDF Upload
+    with st.expander("📄 Document Context (Optional)"):
+        uploaded_pdf = st.file_uploader("Upload a PDF document to chat with it", type=["pdf"])
 
     # Display chat history
     for msg in st.session_state.messages:
