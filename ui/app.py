@@ -82,7 +82,6 @@ st.markdown("""
 # --------------------------------------------------
 st.markdown("# 🧠 Autonomous AI Research Agent")
 st.markdown("##### *Created by Jalla Jagannadharao*")
-st.markdown("###### *Enterprise Research Assistant with Planner & Knowledge Graph*")
 st.markdown("---")
 
 tab1, tab2 = st.tabs(["🔍 Research", "📊 Real-Time Analytics"])
