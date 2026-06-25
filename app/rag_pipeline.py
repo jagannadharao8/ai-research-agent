@@ -3,7 +3,6 @@ import numpy as np
 import faiss
 from groq import Groq
 from dotenv import load_dotenv
-import streamlit as st
 
 from core.embedding_model import get_embed_model
 from tools.web_search import search_web
@@ -21,8 +20,9 @@ def get_groq_client():
         api_key = os.getenv("GROQ_API_KEY")
         if not api_key:
             try:
+                import streamlit as st
                 api_key = st.secrets["GROQ_API_KEY"]
-            except:
+            except Exception:
                 pass
         if api_key:
             _groq_client = Groq(api_key=api_key)
@@ -39,7 +39,6 @@ def call_llm(prompt, max_tokens=600):
         return "GROQ_API_KEY not configured."
 
     try:
-
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt}],
@@ -74,7 +73,7 @@ def build_vector_store(documents):
 
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings))
+    index.add(np.array(embeddings, dtype=np.float32))
 
     return index, documents
 
@@ -83,7 +82,7 @@ def retrieve_context(query, index, documents, k=5):
         return "", []
         
     query_vector = get_embed_model().encode([query])
-    D, I = index.search(np.array(query_vector), k)
+    D, I = index.search(np.array(query_vector, dtype=np.float32), k)
 
     retrieved_docs = []
     context_chunks = []
@@ -137,16 +136,24 @@ def stream_llm(prompt, max_tokens=700):
 # PREPARE RAG
 # =========================
 
-def prepare_rag(query, pdf_path=None):
+def prepare_rag(query, pdf_path=None, chat_history=None):
     """
     Returns (prompt, retrieved_docs, mode)
     """
     try:
         documents = []
+        
+        history_text = ""
+        if chat_history:
+            history_text = "\n=== CONVERSATION HISTORY ===\n"
+            for msg in chat_history[-5:]: # Last 5 messages
+                role = "User" if msg["role"] == "user" else "Assistant"
+                history_text += f"{role}: {msg['content']}\n"
+            history_text += "============================\n\n"
 
         # Direct mode
         if is_general_query(query):
-            prompt = f"Provide a clear and professional answer.\n\nQuestion:\n{query}"
+            prompt = f"{history_text}Provide a clear and professional answer.\n\nQuestion:\n{query}"
             return prompt, [], "Direct"
 
         # Web Search
@@ -160,18 +167,18 @@ def prepare_rag(query, pdf_path=None):
             documents.extend(pdf_docs)
 
         if not documents:
-            prompt = f"Provide a clear and professional answer indicating no documents were found.\n\nQuestion:\n{query}"
+            prompt = f"{history_text}Provide a clear and professional answer indicating no documents were found.\n\nQuestion:\n{query}"
             return prompt, [], "Fallback"
 
         index, documents = build_vector_store(documents)
         context, retrieved_docs = retrieve_context(query, index, documents)
 
         if not context.strip():
-            prompt = f"Provide a clear and professional answer indicating context was empty.\n\nQuestion:\n{query}"
+            prompt = f"{history_text}Provide a clear and professional answer indicating context was empty.\n\nQuestion:\n{query}"
             return prompt, [], "Fallback"
 
         prompt = f"""
-You are a professional AI research assistant.
+{history_text}You are a professional AI research assistant.
 
 STRICT RULES:
 1. Use ONLY information explicitly present in the Retrieved Context.

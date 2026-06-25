@@ -62,12 +62,15 @@ def load_pdf_as_documents(pdf_path):
     """
     raw_text = extract_text_from_pdf(pdf_path)
     chunks = split_text_into_chunks(raw_text)
+    filename = os.path.basename(pdf_path)
 
     documents = []
 
     for chunk in chunks:
         documents.append({
             "source": "pdf",
+            "title": filename,
+            "url": "",
             "content": chunk
         })
 

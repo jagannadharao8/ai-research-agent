@@ -1,6 +1,10 @@
-import streamlit as st
 from sentence_transformers import SentenceTransformer
 
-@st.cache_resource
+_model = None
+
 def get_embed_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    """Returns a singleton SentenceTransformer model instance."""
+    global _model
+    if _model is None:
+        _model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _model

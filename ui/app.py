@@ -2,6 +2,7 @@ import streamlit as st
 import sys
 import os
 import tempfile
+import hashlib
 import pandas as pd
 
 # --------------------------------------------------
@@ -14,6 +15,8 @@ if PROJECT_ROOT not in sys.path:
 from app.rag_pipeline import prepare_rag, stream_llm, evaluate_answer
 from export.pdf_report import generate_pdf_report
 from core.database import log_query, get_analytics
+from core.cache import check_cache, add_to_cache
+from core.logger import logger
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -75,7 +78,7 @@ st.markdown("""
 # --------------------------------------------------
 # HEADER
 # --------------------------------------------------
-st.markdown("# 🧠 Autonomous AI Research Agent")
+st.markdown("# 🧠 Autonomous AI Research Agent V2")
 st.markdown("### *Next-Gen Research Assistant Powered by Groq + Llama*")
 st.markdown("---")
 
@@ -85,130 +88,89 @@ with tab1:
     # --------------------------------------------------
     # SESSION STATE INIT
     # --------------------------------------------------
-    if "research_results" not in st.session_state:
-        st.session_state.research_results = None
-
-    # --------------------------------------------------
-    # USER INPUT
-    # --------------------------------------------------
-    query = st.text_input("Enter your research question:", max_chars=500)
-    uploaded_pdf = st.file_uploader("Upload a PDF document for context (optional)", type=["pdf"])
-
-    # --------------------------------------------------
-    # RUN PIPELINE
-    # --------------------------------------------------
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
     col_run, col_clear = st.columns([1, 5])
-    with col_run:
-        run_pressed = st.button("Run Research 🚀")
     with col_clear:
-        if st.button("Clear Results 🗑️"):
-            st.session_state.research_results = None
+        if st.button("Clear History 🗑️"):
+            st.session_state.messages = []
             st.rerun()
 
-    if run_pressed:
-        if not query.strip():
-            st.warning("Please enter a research question.")
-        else:
+    # Sidebar for PDF Upload
+    with st.sidebar:
+        st.header("Document Context")
+        uploaded_pdf = st.file_uploader("Upload a PDF document", type=["pdf"])
+
+    # Display chat history
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            if msg["role"] == "assistant" and "metrics" in msg:
+                m = msg["metrics"]
+                cols = st.columns(3)
+                cols[0].caption(f"Score: {m['score']}%")
+                cols[1].caption(f"Confidence: {m['confidence']}%")
+                cols[2].caption(f"Risk: {m['risk']}")
+
+    # Chat Input
+    if query := st.chat_input("Ask a research question..."):
+        st.session_state.messages.append({"role": "user", "content": query})
+        with st.chat_message("user"):
+            st.markdown(query)
+            
+        with st.chat_message("assistant"):
             pdf_path = None
             if uploaded_pdf is not None:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(uploaded_pdf.getvalue())
                     pdf_path = tmp.name
-
-            with st.spinner("Analyzing web sources and preparing context..."):
-                prompt, sources, mode = prepare_rag(query, pdf_path)
+                    
+            logger.info(f"Processing query: {query}")
             
+            # Check Semantic Cache
+            cached = check_cache(query)
+            if cached:
+                st.info("⚡ Served from Semantic Cache")
+                st.markdown(cached["answer"])
+                st.session_state.messages.append({
+                    "role": "assistant", 
+                    "content": cached["answer"],
+                    "metrics": {"score": cached["score"], "confidence": cached["confidence"], "risk": cached["risk"]}
+                })
+            else:
+                with st.spinner("Analyzing web sources and preparing context..."):
+                    prompt, sources, mode = prepare_rag(query, pdf_path, chat_history=st.session_state.messages[:-1])
+                
+                st.info(f"**Execution Mode:** {mode}")
+                
+                # Streaming
+                stream = stream_llm(prompt)
+                answer = st.write_stream(stream)
+                
+                with st.spinner("Calculating reliability metrics..."):
+                    score, risk, confidence = evaluate_answer(answer, sources)
+                    log_query(query, mode, score, confidence, risk)
+                    
+                    # Add to cache
+                    add_to_cache(query, mode, prompt, sources, answer, score, risk, confidence)
+                
+                cols = st.columns(3)
+                cols[0].caption(f"Score: {score}%")
+                cols[1].caption(f"Confidence: {confidence}%")
+                cols[2].caption(f"Risk: {risk}")
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "metrics": {"score": score, "confidence": confidence, "risk": risk}
+                })
+
             if pdf_path and os.path.exists(pdf_path):
                 try:
                     os.remove(pdf_path)
-                except:
+                except OSError:
                     pass
-            
-            st.success("Context Prepared! Generating response...")
-
-            st.session_state.research_results = {
-                "query": query,
-                "mode": mode,
-                "sources": sources,
-                "prompt": prompt,
-                "answer": None, # Will stream
-                "score": 0.0,
-                "risk": "LOW",
-                "confidence": 100.0
-            }
-
-    if st.session_state.research_results is not None:
-        res = st.session_state.research_results
-        
-        col1, col2 = st.columns([3, 1])
-
-        with col1:
-            st.info(f"**Execution Mode:** {res['mode']}")
-            st.subheader("AI Response")
-            
-            # Real-time Streaming or Cached
-            if res["answer"] is None:
-                stream = stream_llm(res["prompt"])
-                answer = st.write_stream(stream)
-                res["answer"] = answer
-                
-                # Calculate metrics after streaming
-                with st.spinner("Calculating reliability metrics..."):
-                    score, risk, confidence = evaluate_answer(answer, res["sources"])
-                    res["score"] = score
-                    res["risk"] = risk
-                    res["confidence"] = confidence
-                    
-                    # Log to database for real-time analytics
-                    log_query(res["query"], res["mode"], score, confidence, risk)
-                st.rerun() # Rerun to update metrics UI
-            else:
-                st.markdown(res["answer"])
-
-            # Sources
-            if res["sources"]:
-                st.subheader("Sources Referenced")
-                for doc in res["sources"]:
-                    citation = doc.get("citation", "")
-                    title = doc.get("title", "Untitled")
-                    url = doc.get("url", "")
-                    if url:
-                        st.markdown(f"- **[{citation}]** [{title}]({url})")
-                    else:
-                        st.markdown(f"- **[{citation}]** {title}")
-
-        with col2:
-            st.subheader("Reliability Metrics")
-            st.metric("Hallucination Score", f"{res['score']:.2f}%")
-            st.metric("Confidence", f"{res['confidence']:.2f}%")
-            st.metric("Risk Level", res['risk'])
-            
-            # PDF Generation
-            tmp_pdf_path = os.path.join(tempfile.gettempdir(), f"report_{hash(res['query'])}.pdf")
-                
-            try:
-                generate_pdf_report(
-                    filename=tmp_pdf_path,
-                    query=res['query'],
-                    answer=res['answer'],
-                    score=res['score'],
-                    confidence=res['confidence'],
-                    risk=res['risk'],
-                    sources=res['sources']
-                )
-                
-                with open(tmp_pdf_path, "rb") as pdf_file:
-                    pdf_bytes = pdf_file.read()
-                    
-                st.markdown("---")
-                st.download_button(
-                    label="📥 Download PDF Report",
-                    data=pdf_bytes,
-                    file_name="Research_Report.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error(f"Could not generate PDF: {e}")
 
 with tab2:
     st.subheader("Live System Analytics")
