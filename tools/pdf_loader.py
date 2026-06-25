@@ -20,19 +20,37 @@ def extract_text_from_pdf(pdf_path):
     return full_text
 
 
-def split_text_into_chunks(text, chunk_size=500):
+def split_text_into_chunks(text, chunk_size=500, overlap=100):
     """
     Split text into smaller chunks for better embedding.
+    Uses word boundaries and overlap to preserve semantics.
     """
+    words = text.split()
     chunks = []
-    start = 0
-
-    while start < len(text):
-        end = start + chunk_size
-        chunk = text[start:end]
-        chunks.append(chunk)
-        start = end
-
+    current_chunk = []
+    current_length = 0
+    
+    for word in words:
+        current_chunk.append(word)
+        current_length += len(word) + 1
+        
+        if current_length >= chunk_size:
+            chunks.append(" ".join(current_chunk))
+            
+            # Keep words for overlap
+            overlap_chunk = []
+            overlap_length = 0
+            for w in reversed(current_chunk):
+                overlap_chunk.insert(0, w)
+                overlap_length += len(w) + 1
+                if overlap_length >= overlap:
+                    break
+            current_chunk = overlap_chunk
+            current_length = overlap_length
+            
+    if current_chunk and " ".join(current_chunk) not in chunks:
+        chunks.append(" ".join(current_chunk))
+        
     return chunks
 
 

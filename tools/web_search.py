@@ -1,34 +1,29 @@
 from ddgs import DDGS
+import time
 
-
-def search_web(query, max_results=5):
+def search_web(query, max_results=5, max_retries=3):
     """
-    Returns structured documents:
-    [
-        {
-            "source": "web",
-            "title": "...",
-            "url": "...",
-            "content": "..."
-        }
-    ]
+    Returns structured documents from DuckDuckGo search with retry logic.
     """
-
     results = []
 
-    try:
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
+    for attempt in range(max_retries):
+        try:
+            with DDGS() as ddgs:
+                for r in ddgs.text(query, max_results=max_results):
+                    results.append({
+                        "source": "web",
+                        "title": r.get("title", ""),
+                        "url": r.get("href", ""),
+                        "content": r.get("body", "")
+                    })
+            return results
 
-                results.append({
-                    "source": "web",
-                    "title": r.get("title", ""),
-                    "url": r.get("href", ""),
-                    "content": r.get("body", "")
-                })
-
-    except Exception as e:
-        print("⚠ Web search failed:", e)
-        return []
+        except Exception as e:
+            print(f"⚠ Web search failed (Attempt {attempt+1}/{max_retries}):", e)
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt) # Exponential backoff
+            else:
+                return []
 
     return results

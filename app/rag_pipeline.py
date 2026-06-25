@@ -44,13 +44,10 @@ def call_llm(prompt, max_tokens=600):
 # =========================
 
 def is_general_query(query: str) -> bool:
-    research_keywords = [
-        "research", "paper", "study",
-        "latest", "2024", "2025",
-        "report", "statistics"
-    ]
-    q = query.lower()
-    return not any(word in q for word in research_keywords)
+    prompt = f"Decide if the following query requires real-time web search or searching external documents to answer correctly (e.g., current events, specific facts, recent news, detailed research). Answer only 'SEARCH' or 'DIRECT'.\n\nQuery: {query}"
+    response = call_llm(prompt, max_tokens=10).strip().upper()
+    # If the LLM determines it needs search, it is NOT a general query
+    return "DIRECT" in response and "SEARCH" not in response
 
 
 def generate_direct_answer(query):
@@ -189,6 +186,9 @@ def run_rag(query, pdf_path=None):
             return "Retrieved context is empty.", [], 0.0, "MEDIUM", 50.0, "Fallback"
 
         answer = generate_answer(query, context)
+        
+        if answer.startswith("LLM Error:"):
+            return answer, [], 0.0, "HIGH", 0.0, "Error"
 
         flagged, score, total = hallucination_check(answer, retrieved_docs)
 

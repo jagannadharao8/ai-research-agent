@@ -1,6 +1,7 @@
 import streamlit as st
 import sys
 import os
+import tempfile
 
 # --------------------------------------------------
 # FIX PYTHON PATH FOR STREAMLIT CLOUD
@@ -10,6 +11,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from app.rag_pipeline import run_rag
+from export.pdf_report import generate_pdf_report
 
 # --------------------------------------------------
 # PAGE CONFIG
@@ -21,61 +23,135 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# HEADER
+# CUSTOM CSS AESTHETICS (GLASSMORPHISM)
 # --------------------------------------------------
 st.markdown("""
-# 🧠 Autonomous AI Research Agent
-### Created by Jagannadharao
----
-""")
+<style>
+/* Base Theme */
+.stApp {
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #f1f2f6;
+    font-family: 'Inter', sans-serif;
+}
+/* Main Card Styles */
+.block-container {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    border-radius: 20px;
+    padding: 3rem !important;
+    margin-top: 2rem;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+/* Inputs */
+.stTextInput>div>div>input {
+    background-color: rgba(0, 0, 0, 0.2);
+    color: white;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.2);
+}
+/* Buttons */
+.stButton>button {
+    background: linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%);
+    color: #000;
+    font-weight: bold;
+    border-radius: 10px;
+    border: none;
+    transition: all 0.3s ease;
+}
+.stButton>button:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 15px rgba(0, 201, 255, 0.5);
+}
+/* Metrics */
+[data-testid="stMetricValue"] {
+    color: #92FE9D !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
-st.caption("Powered by Groq + Llama")
+# --------------------------------------------------
+# HEADER
+# --------------------------------------------------
+st.markdown("# 🧠 Autonomous AI Research Agent")
+st.markdown("### *Next-Gen Research Assistant Powered by Groq + Llama*")
+st.markdown("---")
 
 # --------------------------------------------------
 # USER INPUT
 # --------------------------------------------------
 query = st.text_input("Enter your research question:")
-use_pdf = st.checkbox("Add a PDF document")
+use_pdf = st.checkbox("Add a PDF document for context")
 
 pdf_path = None
 if use_pdf:
-    pdf_path = st.text_input("Enter full PDF path:")
+    pdf_path = st.text_input("Enter full PDF path (or relative to project root):")
 
 # --------------------------------------------------
 # RUN PIPELINE
 # --------------------------------------------------
-if st.button("Run Research"):
+if st.button("Run Research 🚀"):
 
     if not query.strip():
         st.warning("Please enter a research question.")
     else:
-        with st.spinner("Running AI Research Pipeline..."):
+        with st.spinner("Analyzing web sources and formulating response..."):
             answer, sources, score, risk, confidence, mode = run_rag(query, pdf_path)
 
-        st.success("Research Completed")
+        st.success("Research Completed!")
 
-        # Mode Display
-        st.info(f"Mode: {mode}")
+        col1, col2 = st.columns([3, 1])
 
-        # Response
-        st.subheader("AI Response")
-        st.markdown(answer)
+        with col1:
+            st.info(f"**Execution Mode:** {mode}")
+            st.subheader("AI Response")
+            st.markdown(answer)
 
-        # Sidebar Metrics
-        st.sidebar.header("Reliability Metrics")
-        st.sidebar.metric("Hallucination Score", f"{score:.2f}%")
-        st.sidebar.metric("Confidence", f"{confidence:.2f}%")
-        st.sidebar.metric("Risk Level", risk)
+            # Sources
+            if sources:
+                st.subheader("Sources Referenced")
+                for doc in sources:
+                    citation = doc.get("citation", "")
+                    title = doc.get("title", "Untitled")
+                    url = doc.get("url", "")
+                    if url:
+                        st.markdown(f"- **[{citation}]** [{title}]({url})")
+                    else:
+                        st.markdown(f"- **[{citation}]** {title}")
 
-        # Sources
-        if sources:
-            st.subheader("Sources")
-            for doc in sources:
-                citation = doc.get("citation", "")
-                title = doc.get("title", "Untitled")
-                url = doc.get("url", "")
-
-                if url:
-                    st.markdown(f"[{citation}] [{title}]({url})")
-                else:
-                    st.markdown(f"[{citation}] {title}")
+        with col2:
+            st.subheader("Reliability Metrics")
+            st.metric("Hallucination Score", f"{score:.2f}%")
+            st.metric("Confidence", f"{confidence:.2f}%")
+            st.metric("Risk Level", risk)
+            
+            # PDF Generation
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_pdf_path = tmp_file.name
+                
+            try:
+                generate_pdf_report(
+                    filename=tmp_pdf_path,
+                    query=query,
+                    answer=answer,
+                    score=score,
+                    confidence=confidence,
+                    risk=risk,
+                    sources=sources
+                )
+                
+                with open(tmp_pdf_path, "rb") as pdf_file:
+                    pdf_bytes = pdf_file.read()
+                    
+                st.markdown("---")
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name="Research_Report.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error(f"Could not generate PDF: {e}")
+            finally:
+                if os.path.exists(tmp_pdf_path):
+                    os.remove(tmp_pdf_path)

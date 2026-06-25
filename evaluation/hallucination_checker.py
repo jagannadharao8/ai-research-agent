@@ -5,21 +5,31 @@ from core.embedding_model import embed_model
 
 def extract_main_answer(text):
     """
-    Extract text inside === MAIN ANSWER === section
+    Extract text inside === MAIN ANSWER === section with fallbacks.
     """
+    # Standard extraction
     pattern = r"=== MAIN ANSWER ===(.*?)=== MODEL INFERENCE ==="
     match = re.search(pattern, text, re.DOTALL)
 
     if match:
         return match.group(1).strip()
-    return ""
+    
+    # Fallback 1: Missing model inference block
+    pattern_fallback = r"=== MAIN ANSWER ===(.*)"
+    match_fallback = re.search(pattern_fallback, text, re.DOTALL)
+    
+    if match_fallback:
+        return match_fallback.group(1).strip()
+        
+    return text.strip()
 
 
 def split_into_sentences(text):
     """
-    Improved sentence splitter
+    Improved sentence splitter avoiding common abbreviations
     """
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    # A slightly better regex avoiding single letter abbreviations like U.S. or U.K.
+    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
     return [s.strip() for s in sentences if len(s.strip()) > 10]
 
 
