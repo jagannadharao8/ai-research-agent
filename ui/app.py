@@ -80,7 +80,7 @@ st.markdown("""
 # --------------------------------------------------
 # HEADER
 # --------------------------------------------------
-st.markdown("# 🧠 Autonomous AI Research Agent V4")
+st.markdown("# 🧠 Autonomous AI Research Agent")
 st.markdown("##### *Created by Jalla Jagannadharao*")
 st.markdown("###### *Enterprise Research Assistant with Planner & Knowledge Graph*")
 st.markdown("---")
