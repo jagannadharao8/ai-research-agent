@@ -131,6 +131,66 @@ def stream_llm(prompt, max_tokens=700):
     except Exception as e:
         yield f"LLM Error: {e}"
 
+def call_llm(prompt, max_tokens=1000):
+    client = get_groq_client()
+    if not client:
+        return ""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            stream=False
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"LLM Call Error: {e}")
+        return ""
+
+def decompose_query(query):
+    """Breaks down a complex query into sub-queries if needed."""
+    prompt = f"""
+    Analyze the following research question. If it is complex and asks to compare multiple things or cover distinct topics, break it down into 2-3 simpler search queries.
+    If it is simple, just return a single search query.
+    Return ONLY a JSON list of strings representing the sub-queries.
+    
+    Question: {query}
+    """
+    res = call_llm(prompt, max_tokens=200)
+    import json
+    try:
+        if "```json" in res:
+            res = res.split("```json")[1].split("```")[0]
+        elif "```" in res:
+            res = res.split("```")[1].split("```")[0]
+        return json.loads(res.strip())
+    except:
+        return [query]
+
+def verify_citations(answer, sources):
+    """Double checks if the answer's citations are supported by the sources."""
+    if not sources or "[" not in answer:
+        return "Not Applicable"
+        
+    context = ""
+    for s in sources:
+        context += f"[{s['citation']}] {s['content']}\n"
+        
+    prompt = f"""
+    You are a strict fact-checker. 
+    Review the Answer below. It contains citations like [1], [2].
+    Check if the claims made with those citations are fully supported by the Source Context.
+    Return a short 1-sentence verdict: 'All citations verified.', 'Citation [X] is unsupported.', or 'Partial support.'
+    
+    Source Context:
+    {context}
+    
+    Answer to Verify:
+    {answer}
+    """
+    return call_llm(prompt, max_tokens=100).strip()
+
 
 # =========================
 # PREPARE RAG
@@ -156,10 +216,12 @@ def prepare_rag(query, pdf_path=None, chat_history=None):
             prompt = f"{history_text}Provide a clear and professional answer.\n\nQuestion:\n{query}"
             return prompt, [], "Direct"
 
-        # Web Search
-        web_docs = search_web(query)
-        if web_docs:
-            documents.extend(web_docs)
+        # Web Search with Decomposition
+        sub_queries = decompose_query(query)
+        for sq in sub_queries:
+            web_docs = search_web(sq)
+            if web_docs:
+                documents.extend(web_docs)
 
         # PDF
         if pdf_path:
