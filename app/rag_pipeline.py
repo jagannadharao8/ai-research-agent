@@ -51,6 +51,44 @@ def is_general_query(query: str) -> bool:
 
 
 # =========================
+# VECTOR STORE & RETRIEVAL
+# =========================
+
+def build_vector_store(documents):
+    texts = [doc["content"] for doc in documents]
+    embeddings = embed_model.encode(texts)
+
+    dimension = embeddings.shape[1]
+    index = faiss.IndexFlatL2(dimension)
+    index.add(np.array(embeddings))
+
+    return index, documents
+
+def retrieve_context(query, index, documents, k=5):
+    query_vector = embed_model.encode([query])
+    D, I = index.search(np.array(query_vector), k)
+
+    retrieved_docs = []
+    context_chunks = []
+
+    for citation_number, idx in enumerate(I[0], start=1):
+        doc = documents[idx]
+
+        doc_with_citation = {
+            "citation": citation_number,
+            "source": doc.get("source", "web"),
+            "title": doc.get("title", ""),
+            "url": doc.get("url", ""),
+            "content": doc["content"]
+        }
+
+        retrieved_docs.append(doc_with_citation)
+        context_chunks.append(f"[{citation_number}] {doc['content']}")
+
+    context_text = "\n\n".join(context_chunks)
+    return context_text, retrieved_docs
+
+# =========================
 # LLM STREAMING
 # =========================
 
