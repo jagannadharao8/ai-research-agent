@@ -50,62 +50,69 @@ def is_general_query(query: str) -> bool:
     return "DIRECT" in response and "SEARCH" not in response
 
 
-def generate_direct_answer(query):
-    prompt = f"Provide a clear and professional answer.\n\nQuestion:\n{query}"
-    return call_llm(prompt, 400)
+# =========================
+# LLM STREAMING
+# =========================
+
+def stream_llm(prompt, max_tokens=700):
+    if not GROQ_API_KEY:
+        yield "GROQ_API_KEY not configured."
+        return
+
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=max_tokens,
+            stream=True
+        )
+        for chunk in response:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+    except Exception as e:
+        yield f"LLM Error: {e}"
 
 
 # =========================
-# VECTOR STORE
+# PREPARE RAG
 # =========================
 
-def build_vector_store(documents):
-    texts = [doc["content"] for doc in documents]
-    embeddings = embed_model.encode(texts)
+def prepare_rag(query, pdf_path=None):
+    """
+    Returns (prompt, retrieved_docs, mode)
+    """
+    try:
+        documents = []
 
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings))
+        # Direct mode
+        if is_general_query(query):
+            prompt = f"Provide a clear and professional answer.\n\nQuestion:\n{query}"
+            return prompt, [], "Direct"
 
-    return index, documents
+        # Web Search
+        web_docs = search_web(query)
+        if web_docs:
+            documents.extend(web_docs)
 
+        # PDF
+        if pdf_path:
+            pdf_docs = load_pdf_as_documents(pdf_path)
+            documents.extend(pdf_docs)
 
-# =========================
-# RETRIEVAL
-# =========================
+        if not documents:
+            prompt = f"Provide a clear and professional answer indicating no documents were found.\n\nQuestion:\n{query}"
+            return prompt, [], "Fallback"
 
-def retrieve_context(query, index, documents, k=5):
-    query_vector = embed_model.encode([query])
-    D, I = index.search(np.array(query_vector), k)
+        index, documents = build_vector_store(documents)
+        context, retrieved_docs = retrieve_context(query, index, documents)
 
-    retrieved_docs = []
-    context_chunks = []
+        if not context.strip():
+            prompt = f"Provide a clear and professional answer indicating context was empty.\n\nQuestion:\n{query}"
+            return prompt, [], "Fallback"
 
-    for citation_number, idx in enumerate(I[0], start=1):
-        doc = documents[idx]
-
-        doc_with_citation = {
-            "citation": citation_number,
-            "source": doc.get("source", "web"),
-            "title": doc.get("title", ""),
-            "url": doc.get("url", ""),
-            "content": doc["content"]
-        }
-
-        retrieved_docs.append(doc_with_citation)
-        context_chunks.append(f"[{citation_number}] {doc['content']}")
-
-    context_text = "\n\n".join(context_chunks)
-    return context_text, retrieved_docs
-
-
-# =========================
-# RAG GENERATION
-# =========================
-
-def generate_answer(query, context):
-
-    prompt = f"""
+        prompt = f"""
 You are a professional AI research assistant.
 
 STRICT RULES:
@@ -131,12 +138,14 @@ Retrieved Context:
 Question:
 {query}
 """
+        return prompt, retrieved_docs, "RAG"
 
-    return call_llm(prompt, 700)
+    except Exception as e:
+        return f"Error occurred: {e}", [], "Error"
 
 
 # =========================
-# RISK + CONFIDENCE
+# EVALUATE
 # =========================
 
 def classify_risk(score):
@@ -147,55 +156,15 @@ def classify_risk(score):
     else:
         return "HIGH"
 
-
 def calculate_confidence(score):
     return round(max(0, 100 - score), 2)
 
+def evaluate_answer(answer, retrieved_docs):
+    if not retrieved_docs or answer.startswith("LLM Error:"):
+        return 0.0, "LOW", 100.0
 
-# =========================
-# MAIN PIPELINE
-# =========================
-
-def run_rag(query, pdf_path=None):
-
-    try:
-        documents = []
-
-        # Direct mode
-        if is_general_query(query):
-            answer = generate_direct_answer(query)
-            return answer, [], 0.0, "LOW", 95.0, "Direct"
-
-        # Web Search
-        web_docs = search_web(query)
-        if web_docs:
-            documents.extend(web_docs)
-
-        # PDF
-        if pdf_path:
-            pdf_docs = load_pdf_as_documents(pdf_path)
-            documents.extend(pdf_docs)
-
-        if not documents:
-            return "No documents found.", [], 0.0, "LOW", 100.0, "Fallback"
-
-        index, documents = build_vector_store(documents)
-        context, retrieved_docs = retrieve_context(query, index, documents)
-
-        if not context.strip():
-            return "Retrieved context is empty.", [], 0.0, "MEDIUM", 50.0, "Fallback"
-
-        answer = generate_answer(query, context)
-        
-        if answer.startswith("LLM Error:"):
-            return answer, [], 0.0, "HIGH", 0.0, "Error"
-
-        flagged, score, total = hallucination_check(answer, retrieved_docs)
-
-        risk = classify_risk(score)
-        confidence = calculate_confidence(score)
-
-        return answer, retrieved_docs, score, risk, confidence, "RAG"
-
-    except Exception as e:
-        return f"Pipeline failed: {e}", [], 0.0, "HIGH", 0.0, "Error"
+    flagged, score, total = hallucination_check(answer, retrieved_docs)
+    risk = classify_risk(score)
+    confidence = calculate_confidence(score)
+    
+    return score, risk, confidence
