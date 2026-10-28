@@ -24,12 +24,13 @@ jobs:
           python - <<'PY'
           from core.llm import complete, LLMError
           try:
-              from app.rag_pipeline import prepare_rag, generate_with_reflection
+              from app.rag_pipeline import is_general_query, prepare_rag, generate_with_reflection
               for question in [
                   "Explain precision and recall in binary classification in two sentences.",
                   "What is the difference between a Python list and a tuple?",
                   "Define overfitting in two sentences."
               ]:
+                  assert is_general_query(question), 'Stable concept did not select DIRECT'
                   prompt, sources, mode = prepare_rag(question)
                   assert mode == "Direct", "Basic concept unexpectedly routed to search"
                   answer, review = generate_with_reflection(prompt, sources)

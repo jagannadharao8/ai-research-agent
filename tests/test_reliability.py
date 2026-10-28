@@ -50,6 +50,14 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertNotIn("internal-only", str(failure.exception))
 
+    def test_router_accepts_only_clear_routing_decisions(self):
+        for output, expected in [("DIRECT", True), ('"DIRECT".', True), ("SEARCH", False)]:
+            with patch.object(rag, "call_llm", return_value=output):
+                self.assertEqual(rag.is_general_query("A question"), expected)
+        with patch.object(rag, "call_llm", return_value="ambiguous text"):
+            with self.assertRaises(ValueError):
+                rag.is_general_query("A question")
+
     def test_model_config(self):
         with patch.dict("os.environ", {"GROQ_MODEL": "chosen-model"}):
             self.assertEqual(llm.model_name(), "chosen-model")
