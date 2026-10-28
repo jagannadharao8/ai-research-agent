@@ -1,120 +1,42 @@
-# 🧠 Autonomous AI Research Agent
+# AI Research Assistant
+Python application by Jalla Jagannadharao for document questions and web-assisted research.
 
-<div align="center">
-  
-  ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
-  ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
-  ![Groq](https://img.shields.io/badge/Powered%20by-Groq%20Llama%203-F55036)
-  ![FAISS](https://img.shields.io/badge/Vector%20DB-FAISS-blueviolet)
-  ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-  [![Python Tests CI](https://github.com/jagannadharao8/ai-research-agent/actions/workflows/python-tests.yml/badge.svg)](https://github.com/jagannadharao8/ai-research-agent/actions/workflows/python-tests.yml)
+## Implemented path
+- Optional PDF/DOCX extraction, overlapping chunks, Sentence Transformers embeddings and FAISS retrieval.
+- Without a document: LLM routing to direct answering or up to three sequential web searches.
+- Draft generation, citation identifier checks, and one best-effort LLM-guided rewrite.
+- Session-private exact-match cache including document digest, recent conversation and model, with a five-minute expiry and twenty-entry limit.
+- Markdown, Word and PDF downloads; optional experimental knowledge graph.
 
-  **An enterprise-grade, autonomous AI research assistant powered by Multi-Agent Workflows.**<br>
-  *Created by **Jalla Jagannadharao***
+## Limits
+Search uses snippets rather than full-page verification. Citation review is a model judgment, not proof of truth. No calibrated confidence or benchmark accuracy is claimed. Files without extractable text require OCR elsewhere. Image, CSV/Excel and arbitrary code execution are not exposed in the UI. The legacy subprocess helper is disabled: a temporary directory and timeout do not form a security sandbox.
 
-</div>
-
-<br/>
-
-![App Screenshot](https://raw.githubusercontent.com/jagannadharao8/ai-research-agent/main/docs/screenshot.png)
-
-## 📖 Overview
-This application goes far beyond standard RAG (Retrieval-Augmented Generation). It utilizes a sophisticated **multi-agent architecture** capable of autonomous query decomposition, self-correcting fact-checks, multimodal vision, and dynamic Python code execution in a secure sandbox.
-
----
-
-## ⚡ Key Features
-
-### 🧩 Agentic Query Planner
-Instead of executing a single linear search, the AI acts as an autonomous planner. It intercepts complex user queries, breaks them down into multiple sub-tasks, executes parallel web searches via the DuckDuckGo API, and synthesizes a comprehensive final report.
-
-### 🔄 Self-Correcting Reflection Loops
-AI hallucinations are mathematically mitigated through an autonomous reflection loop. A secondary **Fact-Checker Agent** reviews the primary agent's draft against the retrieved sources. If citations are unsupported, the Fact-Checker rejects the draft and forces the main agent to rewrite the answer before it is displayed to the user.
-
-### 📊 Sandboxed Code Interpreter
-Equipped with a secure Python execution environment, the agent can write and run Python scripts dynamically. Users can upload `.csv` or `.xlsx` datasets, and the agent will use Pandas and Matplotlib to analyze the data, compute statistics, and render mathematical charts directly in the chat interface.
-
-### 🕸️ Interactive Knowledge Graphs
-Powered by `streamlit-agraph`, the system automatically extracts entities and relationships from the generated research report and renders them as a drag-and-drop interactive Knowledge Graph, allowing users to visually map complex topics.
-
-### 👁️ Multimodal Vision
-Supports image uploads (PNG, JPG) using Groq's Vision models (Llama 3.2 Vision), allowing users to chat with and analyze visual documents, charts, and diagrams natively.
-
-### 🚀 Semantic Caching & Enterprise Exports
-- **FAISS Vector Caching**: Identical or semantically similar queries are served instantly from a FAISS vector database, drastically reducing API latency and saving token costs.
-- **Automated Reports**: Instantly download research results as beautifully formatted PDF, Microsoft Word (.docx), or Markdown files.
-
----
-
-## 🏗️ System Architecture
-
-```mermaid
-graph TD;
-    User[User Input] --> Router{Router Agent};
-    Router -- Text Query --> Planner[Planner Agent];
-    Router -- Math/Data --> Code[Code Sandbox Agent];
-    Router -- Image --> Vision[Vision Agent];
-    
-    Planner --> WebSearch[Web Search];
-    Planner --> VectorDB[(FAISS Semantic Cache)];
-    
-    WebSearch --> Generation[Draft Generation];
-    VectorDB --> Generation;
-    
-    Generation --> FactCheck{Fact-Checker Agent};
-    FactCheck -- Hallucination Detected --> Generation;
-    FactCheck -- Verified --> Output[Final Output];
-    
-    Code --> Output;
-    Vision --> Output;
+## Setup
+Use Python 3.10+ and a virtual environment:
+```sh
+pip install -r requirements.txt
+streamlit run ui/app.py
 ```
+Set GROQ_API_KEY privately in .env or Streamlit secrets. Set GROQ_MODEL to an identifier available to that account. The default is openai/gpt-oss-20b; account access must be verified separately.
+See https://console.groq.com/docs/models for model availability.
 
----
+## Deployment verification
+1. Configure the existing Streamlit deployment to use ui/app.py.
+2. Set secrets without committing them to Git.
+3. Ask a general question, then a web question.
+4. Upload two documents with different facts; confirm each answer uses its own sources.
+5. Check invalid credentials/model access gives an actionable error with no cached answer or new report.
+6. Download each report format and inspect it.
+Automated tests mock provider responses; they do not establish live provider access.
 
-## 🛠️ Technology Stack
-- **Frontend**: Streamlit, Streamlit-Agraph
-- **AI Models**: Groq (`llama-3.3-70b-versatile` for reasoning, `llama-3.2-11b-vision-preview` for Multimodal)
-- **Vector Database**: FAISS (Facebook AI Similarity Search), HuggingFace Sentence Transformers (`all-MiniLM-L6-v2`)
-- **Tools**: DuckDuckGo API, PyPDF2, Python-Docx, Subprocess (Code Sandbox)
+## Tests
+```sh
+python -m unittest discover -s tests -p "test_reliability.py" -v
+python -m pytest tests/
+```
+The first suite is offline and requires only Python's standard library. The broader suite needs the application dependencies and an embedding-model download.
 
----
+## Privacy
+Answers and uploads are not written to the legacy shared cache or query database by the UI. Uploaded temporary files are removed after processing. Browser session data lasts until cleared or disconnected. Historical data files from previous deployments require separate owner cleanup. Clear this session removes current chat, cache and report.
 
-## 📦 Installation & Setup
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/jagannadharao8/ai-research-agent.git
-   cd ai-research-agent
-   ```
-
-2. **Create a virtual environment:**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows use: venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment Variables:**
-   Create a `.env` file in the root directory and add your Groq API key:
-   ```env
-   GROQ_API_KEY=your_groq_api_key_here
-   ```
-
-5. **Run the Application:**
-   ```bash
-   streamlit run ui/app.py
-   ```
-
----
-
-## 🔒 Security Note
-The Python Code Interpreter runs in a temporary directory with a strict 15-second execution timeout to prevent infinite loops. In a production cloud environment, this sandbox should be further isolated using Docker containers or gVisor.
-
----
-<div align="center">
-  <i>Built with ❤️ for the future of Autonomous AI.</i>
-</div>
+MIT licensed. This repository is an educational portfolio application.
