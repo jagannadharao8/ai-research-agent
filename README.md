@@ -2,11 +2,14 @@
 Python application by Jalla Jagannadharao for document questions and web-assisted research.
 
 ## Implemented path
-- Optional PDF/DOCX extraction, overlapping chunks, Sentence Transformers embeddings and FAISS retrieval.
+- Optional PDF/DOCX extraction and overlapping chunks. The hosted default uses lightweight TF-IDF lexical retrieval; Sentence Transformers embeddings and FAISS semantic retrieval remain available with RETRIEVAL_BACKEND=faiss.
 - Without a document: LLM routing to direct answering or up to three sequential web searches.
 - Draft generation, citation identifier checks, and one best-effort LLM-guided rewrite.
 - Session-private exact-match cache including document digest, recent conversation and model, with a five-minute expiry and twenty-entry limit.
 - Markdown, Word and PDF downloads; optional experimental knowledge graph.
+
+## Retrieval configuration
+The default RETRIEVAL_BACKEND=tfidf avoids an embedding-model download and reduces hosting memory/startup cost. It ranks lexical overlap and can miss semantic paraphrases. Set RETRIEVAL_BACKEND=faiss on a host with adequate memory and model-download access to use MiniLM sentence embeddings. The UI labels the retrieval method for each completed answer. Neither method verifies factual truth.
 
 ## Limits
 Search uses snippets rather than full-page verification. Citation review is a model judgment, not proof of truth. No calibrated confidence or benchmark accuracy is claimed. Files without extractable text require OCR elsewhere. Image, CSV/Excel and arbitrary code execution are not exposed in the UI. The legacy subprocess helper is disabled: a temporary directory and timeout do not form a security sandbox.
@@ -36,7 +39,7 @@ GPT-OSS calls use low reasoning effort, a reserved completion allowance and one 
 python -m unittest discover -s tests -p "test_reliability.py" -v
 python -m pytest tests/
 ```
-The first suite is offline and requires only Python's standard library. The broader suite needs the application dependencies and an embedding-model download.
+The reliability suite is offline but requires scikit-learn for lexical retrieval tests. The broader suite needs the application dependencies and an embedding-model download for its explicit semantic-integration tests.
 
 ## Privacy
 Answers and uploads are not written to the legacy shared cache or query database by the UI. Uploaded temporary files are removed after processing. Browser session data lasts until cleared or disconnected. Historical data files from previous deployments require separate owner cleanup. Clear this session removes current chat, cache and report.

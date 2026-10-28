@@ -10,3 +10,4 @@ reportlab
 pandas
 streamlit-agraph
 python-docx
+scikit-learn
