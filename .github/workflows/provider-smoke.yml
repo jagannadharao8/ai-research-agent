@@ -1,8 +1,8 @@
 name: Verify configured Groq provider
-# Includes the production short-token routing path.
+# Exercises actual application routing and answer generation.
 on:
   push:
-    branches: [fix/research-reliability-20261028]
+    branches: [fix/research-provider-completions-20261028]
     paths: [.github/workflows/provider-smoke.yml]
 permissions:
   contents: read
@@ -24,10 +24,17 @@ jobs:
           python - <<'PY'
           from core.llm import complete, LLMError
           try:
-              route = complete("Return only DIRECT.", max_tokens=10)
-              assert "DIRECT" in route.upper(), "Routing did not return a valid result"
-              answer = complete("Reply with only the word READY.", max_tokens=500)
-              assert "READY" in answer.upper(), "Unexpected smoke-test response"
+              from app.rag_pipeline import prepare_rag, generate_with_reflection
+              for question in [
+                  "Explain precision and recall in binary classification in two sentences.",
+                  "What is the difference between a Python list and a tuple?",
+                  "Define overfitting in two sentences."
+              ]:
+                  prompt, sources, mode = prepare_rag(question)
+                  assert mode == "Direct", "Basic concept unexpectedly routed to search"
+                  answer, review = generate_with_reflection(prompt, sources)
+                  assert len(answer) > 30, "Missing application answer"
+              print("Three real application queries completed with routing and answers.")
               print("Configured Groq model returned a valid live response.")
           except LLMError as exc:
               raise SystemExit(str(exc))
