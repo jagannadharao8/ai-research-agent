@@ -4,7 +4,7 @@ import types
 import unittest
 from unittest.mock import patch
 from core import llm
-from core.cache import context_key, check_cache, add_to_cache, MAX_ENTRIES
+from core.session_cache import context_key, check_cache, add_to_cache, MAX_ENTRIES
 from app import rag_pipeline as rag
 
 class ReliabilityTests(unittest.TestCase):

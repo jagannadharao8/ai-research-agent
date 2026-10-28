@@ -9,7 +9,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.rag_pipeline import prepare_rag, generate_with_reflection
 from core.llm import LLMError, model_name
-from core.cache import context_key, check_cache, add_to_cache
+from core.session_cache import context_key, check_cache, add_to_cache
 from export.doc_report import generate_docx, generate_markdown
 
 st.set_page_config(page_title="AI Research Assistant", page_icon="🧠", layout="wide")
