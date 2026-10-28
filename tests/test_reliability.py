@@ -58,6 +58,26 @@ class ReliabilityTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 rag.is_general_query("A question")
 
+
+    def test_default_lexical_retrieval_does_not_load_embedding_model(self):
+        documents = [
+            {"content": "Orchard apples are red.", "title": "one"},
+            {"content": "The calibration code is AMBER7319.", "title": "two"}]
+        with patch.object(rag, "setting", return_value="tfidf"), patch.object(rag, "build_vector_store") as semantic:
+            context, sources = rag.select_context("calibration code", documents, k=1)
+        semantic.assert_not_called()
+        self.assertIn("AMBER7319", context)
+        self.assertEqual(sources[0]["title"], "two")
+        self.assertEqual(sources[0]["retrieval"], "TF-IDF lexical")
+
+    def test_semantic_backend_remains_explicitly_available(self):
+        with patch.object(rag, "setting", return_value="faiss"), patch.object(
+                rag, "build_vector_store", return_value=("index", [{"content": "evidence"}])) as build, patch.object(
+                rag, "retrieve_context", return_value=("evidence", [{"citation": 1}])):
+            context, sources = rag.select_context("question", [{"content": "evidence"}])
+        build.assert_called_once()
+        self.assertEqual(sources[0]["retrieval"], "FAISS semantic")
+
     def test_model_config(self):
         with patch.dict("os.environ", {"GROQ_MODEL": "chosen-model"}):
             self.assertEqual(llm.model_name(), "chosen-model")
@@ -131,8 +151,7 @@ class ReliabilityTests(unittest.TestCase):
         loader = types.ModuleType("tools.document_loader")
         loader.load_document = lambda path: [{"content": "private document", "title": "file"}]
         with patch.dict(sys.modules, {"tools.document_loader": loader}), patch.object(rag, "is_general_query") as router, patch.object(
-                rag, "build_vector_store", return_value=(object(), [{"content": "private document"}])), patch.object(
-                rag, "retrieve_context", return_value=("private document", [{"citation": 1}])):
+                rag, "select_context", return_value=("private document", [{"citation": 1}])):
             prompt, sources, mode = rag.prepare_rag("explain", "file.pdf")
         router.assert_not_called()
         self.assertEqual(mode, "Document")

@@ -54,12 +54,17 @@ if query := st.chat_input("Ask a question"):
                         document_path = handle.name
                 with st.spinner("Retrieving evidence and reviewing the answer..."):
                     prompt, sources, mode = prepare_rag(query, document_path, history)
+                    if uploaded:
+                        for source in sources:
+                            source['title'] = uploaded.name
                     answer, verification = generate_with_reflection(prompt, sources)
                 result = {"answer": answer, "sources": sources, "mode": mode, "verification": verification}
                 # Failed provider calls raise and never reach cache/export.
                 add_to_cache(st.session_state.answer_cache, key, result)
             st.markdown(result["answer"])
             st.caption("Mode: " + result["mode"])
+            if result["sources"]:
+                st.caption("Retrieval: " + result["sources"][0].get("retrieval", "not recorded"))
             st.caption("Citation review: " + result["verification"])
             st.caption("Citation review is an LLM heuristic, not a confidence percentage or guarantee of truth.")
             if result["sources"]:

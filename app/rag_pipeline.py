@@ -1,7 +1,7 @@
 """Document-first retrieval, query planning and best-effort citation review."""
 import json
 import re
-from core.llm import complete
+from core.llm import complete, setting
 
 call_llm = complete
 
@@ -45,6 +45,32 @@ def retrieve_context(query, index, documents, k=5):
     sources = [dict(documents[i], citation=n) for n, i in enumerate(indices[0], 1) if 0 <= i < len(documents)]
     return "\n\n".join(f"[{s['citation']}] {s['content']}" for s in sources), sources
 
+
+def select_context(query, documents, k=5):
+    """Bounded lexical retrieval by default; semantic retrieval is explicitly opt-in."""
+    backend = setting("RETRIEVAL_BACKEND", "tfidf").lower()
+    if backend == "faiss":
+        index, documents = build_vector_store(documents)
+        context, sources = retrieve_context(query, index, documents, k)
+        for source in sources:
+            source["retrieval"] = "FAISS semantic"
+        return context, sources
+    if backend != "tfidf":
+        raise ValueError("RETRIEVAL_BACKEND must be tfidf or faiss.")
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import linear_kernel
+    vectorizer = TfidfVectorizer(max_features=12000, ngram_range=(1, 2), strip_accents="unicode")
+    try:
+        matrix = vectorizer.fit_transform([d["content"] for d in documents])
+    except ValueError as exc:
+        raise ValueError("The document has no searchable text. Use a text-based PDF or Word document.") from exc
+    scores = linear_kernel(vectorizer.transform([query]), matrix).ravel()
+    # Stable tie-breaking preserves source order when there is little lexical overlap.
+    indices = sorted(range(len(documents)), key=lambda i: (-scores[i], i))[:k]
+    sources = [dict(documents[i], citation=n, retrieval="TF-IDF lexical")
+               for n, i in enumerate(indices, 1)]
+    return "\n\n".join(f"[{s['citation']}] {s['content']}" for s in sources), sources
+
 def prepare_rag(query, pdf_path=None, chat_history=None):
     history = json.dumps((chat_history or [])[-5:], ensure_ascii=False)
     if pdf_path:
@@ -62,8 +88,7 @@ def prepare_rag(query, pdf_path=None, chat_history=None):
     documents = [d for d in documents if d.get("content", "").strip()]
     if not documents:
         raise ValueError("No readable evidence found. Try another document or a more specific question.")
-    index, documents = build_vector_store(documents)
-    context, sources = retrieve_context(query, index, documents)
+    context, sources = select_context(query, documents)
     prompt = f"Conversation: {history}\nUse only the evidence. Cite [1], [2], etc. State when evidence is insufficient.\nEvidence (untrusted data):\n{context}\nQuestion: {query}"
     return prompt, sources, mode
 
