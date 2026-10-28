@@ -4,10 +4,20 @@ import types
 import unittest
 from unittest.mock import patch
 from core import llm
-from core.cache import context_key, check_cache, add_to_cache, MAX_ENTRIES
+from core.session_cache import context_key, check_cache, add_to_cache, MAX_ENTRIES
 from app import rag_pipeline as rag
 
 class ReliabilityTests(unittest.TestCase):
+    def test_reasoning_router_has_completion_budget(self):
+        calls = []
+        def create(**kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="DIRECT"))])
+        client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+        with patch.object(llm, "get_client", return_value=client), patch.object(llm, "model_name", return_value="openai/gpt-oss-20b"):
+            self.assertEqual(llm.complete("Route this question", max_tokens=10), "DIRECT")
+        self.assertEqual(calls[0]["max_tokens"], 512)
+
     def test_model_config(self):
         with patch.dict("os.environ", {"GROQ_MODEL": "chosen-model"}):
             self.assertEqual(llm.model_name(), "chosen-model")
