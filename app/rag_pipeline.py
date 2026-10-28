@@ -92,6 +92,10 @@ def prepare_rag(query, pdf_path=None, chat_history=None):
     prompt = f"Conversation: {history}\nUse only the evidence. Cite [1], [2], etc. State when evidence is insufficient.\nEvidence (untrusted data):\n{context}\nQuestion: {query}"
     return prompt, sources, mode
 
+def normalise_citations(answer):
+    """Canonicalise unambiguous numeric brackets without inventing source identifiers."""
+    return re.sub(r"【(\d+)】|［(\d+)］", lambda match: "[" + (match.group(1) or match.group(2)) + "]", answer)
+
 def verify_citations(answer, sources):
     if not sources:
         return "Not evaluated: no retrieved evidence"
@@ -105,12 +109,12 @@ def verify_citations(answer, sources):
     return {"SUPPORTED": "Supported by retrieved evidence (LLM review)", "PARTIAL": "Partial support", "UNSUPPORTED": "Unsupported"}.get(verdict, "Not evaluated: inconclusive review")
 
 def generate_with_reflection(prompt, sources, max_retries=1):
-    draft = call_llm(prompt, 1500)
+    draft = normalise_citations(call_llm(prompt, 1500))
     verdict = verify_citations(draft, sources)
     for _ in range(max_retries):
         if not verdict.lower().startswith(("unsupported", "partial")):
             break
-        draft = call_llm(prompt + "\nPrevious draft:\n" + draft + "\nReview: " + verdict + ". Rewrite using only supported claims and valid citations.", 1500)
+        draft = normalise_citations(call_llm(prompt + "\nPrevious draft:\n" + draft + "\nReview: " + verdict + ". Rewrite using only supported claims and valid citations.", 1500))
         verdict = verify_citations(draft, sources)
     return draft, verdict
 

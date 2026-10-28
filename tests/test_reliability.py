@@ -78,6 +78,15 @@ class ReliabilityTests(unittest.TestCase):
         build.assert_called_once()
         self.assertEqual(sources[0]["retrieval"], "FAISS semantic")
 
+
+    def test_numeric_unicode_citation_is_checked_as_its_existing_source(self):
+        with patch.object(rag, "call_llm", side_effect=["The code is AMBER7319【1】.", "SUPPORTED"]):
+            answer, verdict = rag.generate_with_reflection("question", [{"citation": 1, "content": "The code is AMBER7319."}])
+        self.assertEqual(answer, "The code is AMBER7319[1].")
+        self.assertTrue(verdict.startswith("Supported"))
+        self.assertEqual(rag.normalise_citations("A number 1 and an unknown citation 【9】"), "A number 1 and an unknown citation [9]")
+        self.assertIn("unknown", rag.verify_citations(rag.normalise_citations("Claim【9】"), [{"citation": 1, "content": "Fact"}]))
+
     def test_model_config(self):
         with patch.dict("os.environ", {"GROQ_MODEL": "chosen-model"}):
             self.assertEqual(llm.model_name(), "chosen-model")
