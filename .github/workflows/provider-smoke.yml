@@ -23,6 +23,8 @@ jobs:
           python - <<'PY'
           from core.llm import complete, LLMError
           try:
+              route = complete("Return only DIRECT.", max_tokens=10)
+              assert "DIRECT" in route.upper(), "Routing did not return a valid result"
               answer = complete("Reply with only the word READY.", max_tokens=500)
               assert "READY" in answer.upper(), "Unexpected smoke-test response"
               print("Configured Groq model returned a valid live response.")
