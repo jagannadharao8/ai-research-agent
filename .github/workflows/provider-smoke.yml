@@ -1,0 +1,36 @@
+name: Verify configured Groq provider
+on:
+  push:
+    branches: [fix/research-reliability-20261028]
+    paths: [.github/workflows/provider-smoke.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install groq
+      - name: Verify an actual model response without logging credentials
+        if: env.GROQ_API_KEY != ''
+        run: |
+          python - <<'PY'
+          from core.llm import complete, LLMError
+          try:
+              answer = complete("Reply with only the word READY.", max_tokens=500)
+              assert "READY" in answer.upper(), "Unexpected smoke-test response"
+              print("Configured Groq model returned a valid live response.")
+          except LLMError as exc:
+              raise SystemExit(str(exc))
+          PY
+      - name: Report missing deployment credential
+        if: env.GROQ_API_KEY == ''
+        run: |
+          echo "Live verification unavailable: no repository Groq secret is configured."
+          exit 1

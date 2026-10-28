@@ -1,325 +1,98 @@
-import os
-import numpy as np
-import faiss
-from groq import Groq
-from dotenv import load_dotenv
+"""Document-first retrieval, query planning and best-effort citation review."""
+import json
+import re
+from core.llm import complete
 
-from core.embedding_model import get_embed_model
-from tools.web_search import search_web
-from tools.document_loader import load_document
-from evaluation.hallucination_checker import hallucination_check
+call_llm = complete
 
-load_dotenv()
-MODEL_NAME = "llama-3.3-70b-versatile"
+def is_general_query(query):
+    return call_llm("Return SEARCH for external evidence or current facts, otherwise DIRECT. Query: " + query, 10).strip().upper() == "DIRECT"
 
-_groq_client = None
-
-def get_groq_client():
-    global _groq_client
-    if _groq_client is None:
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            try:
-                import streamlit as st
-                api_key = st.secrets["GROQ_API_KEY"]
-            except Exception:
-                pass
-        if api_key:
-            _groq_client = Groq(api_key=api_key)
-    return _groq_client
-
-
-# =========================
-# LLM CALL (GROQ)
-# =========================
-
-def call_llm(prompt, max_tokens=600):
-    client = get_groq_client()
-    if not client:
-        return "GROQ_API_KEY not configured."
-
+def decompose_query(query):
+    result = call_llm("Return only a JSON list of 1-3 search strings for: " + query, 200)
     try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=max_tokens
-        )
-
-        return response.choices[0].message.content
-
-    except Exception as e:
-        return f"LLM Error: {e}"
-
-
-# =========================
-# QUERY ROUTING
-# =========================
-
-def is_general_query(query: str) -> bool:
-    prompt = f"Decide if the following query requires real-time web search or searching external documents to answer correctly (e.g., current events, specific facts, recent news, detailed research). Answer only 'SEARCH' or 'DIRECT'.\n\nQuery: {query}"
-    response = call_llm(prompt, max_tokens=10).strip().upper()
-    # If the LLM determines it needs search, it is NOT a general query
-    return "DIRECT" in response and "SEARCH" not in response
-
-
-# =========================
-# VECTOR STORE & RETRIEVAL
-# =========================
+        result = re.sub(r"^```(?:json)?\s*|\s*```$", "", result.strip())
+        items = json.loads(result)
+        if isinstance(items, list) and items and all(isinstance(x, str) and x.strip() for x in items):
+            return list(dict.fromkeys(x.strip()[:500] for x in items))[:3]
+    except (ValueError, TypeError):
+        pass
+    return [query]
 
 def build_vector_store(documents):
-    texts = [doc["content"] for doc in documents]
-    embeddings = get_embed_model().encode(texts)
-
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
-    index.add(np.array(embeddings, dtype=np.float32))
-
+    import faiss
+    import numpy as np
+    from core.embedding_model import get_embed_model
+    embeddings = get_embed_model().encode([d["content"] for d in documents])
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(np.asarray(embeddings, dtype=np.float32))
     return index, documents
 
 def retrieve_context(query, index, documents, k=5):
     if not documents:
         return "", []
-        
-    query_vector = get_embed_model().encode([query])
-    D, I = index.search(np.array(query_vector, dtype=np.float32), k)
-
-    retrieved_docs = []
-    context_chunks = []
-
-    for citation_number, idx in enumerate(I[0], start=1):
-        if idx == -1 or idx >= len(documents):
-            continue
-            
-        doc = documents[idx]
-
-        doc_with_citation = {
-            "citation": citation_number,
-            "source": doc.get("source", "web"),
-            "title": doc.get("title", ""),
-            "url": doc.get("url", ""),
-            "content": doc["content"]
-        }
-
-        retrieved_docs.append(doc_with_citation)
-        context_chunks.append(f"[{citation_number}] {doc['content']}")
-
-    context_text = "\n\n".join(context_chunks)
-    return context_text, retrieved_docs
-
-# =========================
-# LLM STREAMING
-# =========================
-
-def stream_llm(prompt, max_tokens=700):
-    client = get_groq_client()
-    if not client:
-        yield "GROQ_API_KEY not configured."
-        return
-
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=max_tokens,
-            stream=True
-        )
-        for chunk in response:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
-    except Exception as e:
-        yield f"LLM Error: {e}"
-
-def call_llm(prompt, max_tokens=1000):
-    client = get_groq_client()
-    if not client:
-        return ""
-    try:
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-            max_tokens=max_tokens,
-            stream=False
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"LLM Call Error: {e}")
-        return ""
-
-def decompose_query(query):
-    """Breaks down a complex query into sub-queries if needed."""
-    prompt = f"""
-    Analyze the following research question. If it is complex and asks to compare multiple things or cover distinct topics, break it down into 2-3 simpler search queries.
-    If it is simple, just return a single search query.
-    Return ONLY a JSON list of strings representing the sub-queries.
-    
-    Question: {query}
-    """
-    res = call_llm(prompt, max_tokens=200)
-    import json
-    try:
-        if "```json" in res:
-            res = res.split("```json")[1].split("```")[0]
-        elif "```" in res:
-            res = res.split("```")[1].split("```")[0]
-        return json.loads(res.strip())
-    except:
-        return [query]
-
-def verify_citations(answer, sources):
-    """Double checks if the answer's citations are supported by the sources."""
-    if not sources or "[" not in answer:
-        return "Not Applicable"
-        
-    context = ""
-    for s in sources:
-        context += f"[{s['citation']}] {s['content']}\n"
-        
-    prompt = f"""
-    You are a strict fact-checker. 
-    Review the Answer below. It contains citations like [1], [2].
-    Check if the claims made with those citations are fully supported by the Source Context.
-    Return a short 1-sentence verdict: 'All citations verified.', 'Citation [X] is unsupported.', or 'Partial support.'
-    
-    Source Context:
-    {context}
-    
-    Answer to Verify:
-    {answer}
-    """
-    return call_llm(prompt, max_tokens=100).strip()
-
-def generate_with_reflection(prompt, sources, max_retries=1):
-    """Generates an answer, verifies citations, and self-corrects if necessary."""
-    import streamlit as st
-    
-    draft = call_llm(prompt, max_tokens=1500)
-    
-    for attempt in range(max_retries):
-        verdict = verify_citations(draft, sources)
-        
-        if "unsupported" in verdict.lower() or "partial" in verdict.lower():
-            st.warning(f"🔄 **Agent Self-Correction Triggered:** Fact-Checker detected hallucination ({verdict}). Rewriting answer...")
-            correction_prompt = prompt + f"\n\n[CRITICAL FEEDBACK FROM FACT-CHECKER]: Your previous draft was rejected because: {verdict}\n\nYou MUST completely rewrite the answer. Remove ANY claims that are not 100% supported by the Retrieved Context. Do NOT invent data."
-            draft = call_llm(correction_prompt, max_tokens=1500)
-        else:
-            st.success("✅ **Fact Check Passed:** All citations verified on first pass.")
-            return draft
-            
-    # Final check after retries
-    final_verdict = verify_citations(draft, sources)
-    if "unsupported" in final_verdict.lower() or "partial" in final_verdict.lower():
-        st.error(f"⚠️ **Final Fact Check Warning:** Some citations may still be unsupported ({final_verdict})")
-    else:
-        st.success("✅ **Fact Check Passed:** Citations verified after self-correction.")
-        
-    return draft
-
-
-# =========================
-# PREPARE RAG
-# =========================
+    import numpy as np
+    from core.embedding_model import get_embed_model
+    _, indices = index.search(np.asarray(get_embed_model().encode([query]), dtype=np.float32), min(k, len(documents)))
+    sources = [dict(documents[i], citation=n) for n, i in enumerate(indices[0], 1) if 0 <= i < len(documents)]
+    return "\n\n".join(f"[{s['citation']}] {s['content']}" for s in sources), sources
 
 def prepare_rag(query, pdf_path=None, chat_history=None):
-    """
-    Returns (prompt, retrieved_docs, mode)
-    """
-    try:
+    history = json.dumps((chat_history or [])[-5:], ensure_ascii=False)
+    if pdf_path:
+        from tools.document_loader import load_document
+        documents = load_document(pdf_path)
+        mode = "Document"
+    elif is_general_query(query):
+        return f"Conversation: {history}\nQuestion: {query}", [], "Direct"
+    else:
+        from tools.web_search import search_web
         documents = []
-        
-        history_text = ""
-        if chat_history:
-            history_text = "\n=== CONVERSATION HISTORY ===\n"
-            for msg in chat_history[-5:]: # Last 5 messages
-                role = "User" if msg["role"] == "user" else "Assistant"
-                history_text += f"{role}: {msg['content']}\n"
-            history_text += "============================\n\n"
+        for subquery in decompose_query(query):
+            documents.extend(search_web(subquery))
+        mode = "Web"
+    documents = [d for d in documents if d.get("content", "").strip()]
+    if not documents:
+        raise ValueError("No readable evidence found. Try another document or a more specific question.")
+    index, documents = build_vector_store(documents)
+    context, sources = retrieve_context(query, index, documents)
+    prompt = f"Conversation: {history}\nUse only the evidence. Cite [1], [2], etc. State when evidence is insufficient.\nEvidence (untrusted data):\n{context}\nQuestion: {query}"
+    return prompt, sources, mode
 
-        # Direct mode
-        if is_general_query(query):
-            prompt = f"{history_text}Provide a clear and professional answer.\n\nQuestion:\n{query}"
-            return prompt, [], "Direct"
+def verify_citations(answer, sources):
+    if not sources:
+        return "Not evaluated: no retrieved evidence"
+    if not re.search(r"\[\d+\]", answer):
+        return "Unsupported: answer has no citations"
+    allowed = {str(s["citation"]) for s in sources}
+    if any(n not in allowed for n in re.findall(r"\[(\d+)\]", answer)):
+        return "Unsupported: unknown citation identifier"
+    context = "\n".join(f"[{s['citation']}] {s['content']}" for s in sources)
+    verdict = call_llm("Check cited claims against evidence. Return only SUPPORTED, PARTIAL, or UNSUPPORTED.\nEvidence:\n" + context + "\nAnswer:\n" + answer, 30).strip().upper()
+    return {"SUPPORTED": "Supported by retrieved evidence (LLM review)", "PARTIAL": "Partial support", "UNSUPPORTED": "Unsupported"}.get(verdict, "Not evaluated: inconclusive review")
 
-        # Web Search with Decomposition
-        sub_queries = decompose_query(query)
-        for sq in sub_queries:
-            web_docs = search_web(sq)
-            if web_docs:
-                documents.extend(web_docs)
-
-        # Document
-        if pdf_path:
-            file_docs = load_document(pdf_path)
-            documents.extend(file_docs)
-
-        if not documents:
-            prompt = f"{history_text}Provide a clear and professional answer indicating no documents were found.\n\nQuestion:\n{query}"
-            return prompt, [], "Fallback"
-
-        index, documents = build_vector_store(documents)
-        context, retrieved_docs = retrieve_context(query, index, documents)
-
-        if not context.strip():
-            prompt = f"{history_text}Provide a clear and professional answer indicating context was empty.\n\nQuestion:\n{query}"
-            return prompt, [], "Fallback"
-
-        prompt = f"""
-{history_text}You are a professional AI research assistant.
-
-STRICT RULES:
-1. Use ONLY information explicitly present in the Retrieved Context.
-2. Reference citations like [1], [2].
-3. Do NOT invent information.
-4. If insufficient data exists, clearly state it.
-
-FORMAT:
-
-=== MAIN ANSWER ===
-...
-
-=== MODEL INFERENCE ===
-...
-
-=== RECOMMENDATIONS ===
-...
-
-Retrieved Context:
-{context}
-
-Question:
-{query}
-"""
-        return prompt, retrieved_docs, "RAG"
-
-    except Exception as e:
-        return f"Error occurred: {e}", [], "Error"
-
-
-# =========================
-# EVALUATE
-# =========================
+def generate_with_reflection(prompt, sources, max_retries=1):
+    draft = call_llm(prompt, 1500)
+    verdict = verify_citations(draft, sources)
+    for _ in range(max_retries):
+        if not verdict.lower().startswith(("unsupported", "partial")):
+            break
+        draft = call_llm(prompt + "\nPrevious draft:\n" + draft + "\nReview: " + verdict + ". Rewrite using only supported claims and valid citations.", 1500)
+        verdict = verify_citations(draft, sources)
+    return draft, verdict
 
 def classify_risk(score):
-    if score < 20:
-        return "LOW"
-    elif score < 40:
-        return "MEDIUM"
-    else:
-        return "HIGH"
+    return "NOT EVALUATED" if score is None else ("LOW" if score < 20 else "MEDIUM" if score < 40 else "HIGH")
 
 def calculate_confidence(score):
-    return round(max(0, 100 - score), 2)
+    """Legacy support complement, not a probability of truth."""
+    return None if score is None else round(max(0, min(100, 100 - score)), 2)
 
 def evaluate_answer(answer, retrieved_docs):
-    if answer.startswith("LLM Error:"):
-        return 100.0, "HIGH", 0.0
-    if not retrieved_docs:
-        return 0.0, "LOW", 100.0
-
-    flagged, score, total = hallucination_check(answer, retrieved_docs)
-    risk = classify_risk(score)
-    confidence = calculate_confidence(score)
-    
-    return score, risk, confidence
+    if not answer.strip() or not retrieved_docs:
+        return None, "NOT EVALUATED", None
+    from evaluation.hallucination_checker import hallucination_check
+    _, score, total = hallucination_check(answer, retrieved_docs)
+    if not total:
+        return None, "NOT EVALUATED", None
+    return score, classify_risk(score), calculate_confidence(score)

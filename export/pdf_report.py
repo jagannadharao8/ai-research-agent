@@ -67,7 +67,7 @@ def generate_pdf_report(
     # QUERY
     # ------------------------
     elements.append(Paragraph("Research Question", section_style))
-    elements.append(Paragraph(query, normal_style))
+    elements.append(Paragraph(xml.sax.saxutils.escape(query), normal_style))
     elements.append(Spacer(1, 0.2 * inch))
 
     # ------------------------
@@ -84,8 +84,8 @@ def generate_pdf_report(
     elements.append(Paragraph("Evaluation Metrics", section_style))
 
     metrics = [
-        f"Hallucination Score: {score:.2f}%",
-        f"Confidence Level: {confidence:.2f}%",
+        "Citation review is a heuristic, not a truth probability.",
+        "No calibrated confidence estimate is available.",
         f"Risk Classification: {risk}"
     ]
 
