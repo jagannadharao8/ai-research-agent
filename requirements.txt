@@ -1,5 +1,5 @@
 streamlit
-groq
+groq==1.7.0
 python-dotenv
 sentence-transformers
 faiss-cpu
