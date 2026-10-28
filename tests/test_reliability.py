@@ -16,7 +16,47 @@ class ReliabilityTests(unittest.TestCase):
         client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
         with patch.object(llm, "get_client", return_value=client), patch.object(llm, "model_name", return_value="openai/gpt-oss-20b"):
             self.assertEqual(llm.complete("Route this question", max_tokens=10), "DIRECT")
-        self.assertEqual(calls[0]["max_tokens"], 512)
+        self.assertGreaterEqual(calls[0]["max_completion_tokens"], 2048)
+        self.assertEqual(calls[0]["reasoning_effort"], "low")
+
+
+    def test_exhausted_reasoning_completion_retries_before_returning(self):
+        calls = []
+        responses = iter([
+            types.SimpleNamespace(choices=[types.SimpleNamespace(finish_reason="length",
+                message=types.SimpleNamespace(content="", reasoning="internal-only"))]),
+            types.SimpleNamespace(choices=[types.SimpleNamespace(finish_reason="stop",
+                message=types.SimpleNamespace(content="DIRECT"))])
+        ])
+        def create(**kwargs):
+            calls.append(kwargs)
+            return next(responses)
+        client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+        with patch.object(llm, "get_client", return_value=client), patch.object(llm, "model_name", return_value="openai/gpt-oss-20b"):
+            self.assertEqual(llm.complete("Route this question", 10), "DIRECT")
+        self.assertEqual(len(calls), 2)
+        self.assertGreater(calls[1]["max_completion_tokens"], calls[0]["max_completion_tokens"])
+
+    def test_exhaustion_is_bounded_and_never_returns_reasoning(self):
+        calls = []
+        def create(**kwargs):
+            calls.append(kwargs)
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(finish_reason="length",
+                message=types.SimpleNamespace(content="", reasoning="internal-only"))])
+        client = types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
+        with patch.object(llm, "get_client", return_value=client), patch.object(llm, "model_name", return_value="openai/gpt-oss-20b"):
+            with self.assertRaises(llm.LLMError) as failure:
+                llm.complete("Question", 10)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("internal-only", str(failure.exception))
+
+    def test_router_accepts_only_clear_routing_decisions(self):
+        for output, expected in [("DIRECT", True), ('"DIRECT".', True), ("SEARCH", False)]:
+            with patch.object(rag, "call_llm", return_value=output):
+                self.assertEqual(rag.is_general_query("A question"), expected)
+        with patch.object(rag, "call_llm", return_value="ambiguous text"):
+            with self.assertRaises(ValueError):
+                rag.is_general_query("A question")
 
     def test_model_config(self):
         with patch.dict("os.environ", {"GROQ_MODEL": "chosen-model"}):
